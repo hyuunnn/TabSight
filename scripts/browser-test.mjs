@@ -5,7 +5,7 @@ import {chromium} from 'playwright';
 
 const base=process.env.TABSIGHT_URL||'http://127.0.0.1:8787';
 const python='.venv/bin/python';const fixtureArgs=['-m','scripts.browser_fixture','create'];if(process.env.TABSIGHT_E2E_PROJECT)fixtureArgs.push(process.env.TABSIGHT_E2E_PROJECT);
-const id=execFileSync(python,fixtureArgs,{encoding:'utf8'}).trim();
+let id;try{id=execFileSync(python,fixtureArgs,{encoding:'utf8'}).trim();}catch(e){if(e.status==null)console.error(e.message);process.exit(e.status||1);}
 fs.mkdirSync('test-results',{recursive:true});const errors=[];const results=[];
 const browser=await chromium.launch({executablePath:process.env.CHROME_PATH||'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',headless:true});
 const page=await browser.newPage({viewport:{width:1440,height:1000},acceptDownloads:true});page.setDefaultTimeout(12000);page.on('pageerror',e=>errors.push(e.message));

@@ -6,7 +6,7 @@ import {chromium} from 'playwright';
 const base=process.env.TABSIGHT_URL||'http://127.0.0.1:8787';
 const fixtureArgs=['-m','scripts.browser_fixture','create'];
 if(process.env.TABSIGHT_E2E_PROJECT)fixtureArgs.push(process.env.TABSIGHT_E2E_PROJECT);
-const id=execFileSync('.venv/bin/python',fixtureArgs,{encoding:'utf8'}).trim();
+let id;try{id=execFileSync('.venv/bin/python',fixtureArgs,{encoding:'utf8'}).trim();}catch(e){if(e.status==null)console.error(e.message);process.exit(e.status||1);}
 const project=await(await fetch(`${base}/api/projects/${id}`)).json();
 const results=[],errors=[];
 let browser,page;
