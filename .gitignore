@@ -1,0 +1,10 @@
+.venv/
+node_modules/
+public/alphatab/
+dist/
+.data/
+__pycache__/
+.pytest_cache/
+*.pyc
+.DS_Store
+test-results/

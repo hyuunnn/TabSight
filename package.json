@@ -1,0 +1,30 @@
+{
+  "name": "tabsight",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "predev": "node scripts/assets.mjs",
+    "dev": "vite --host 127.0.0.1",
+    "prebuild": "node scripts/assets.mjs",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "test:e2e": "node scripts/browser-test.mjs",
+    "test:playback": "node scripts/playback-test.mjs"
+  },
+  "dependencies": {
+    "@coderline/alphatab": "^1.8.4",
+    "lucide-react": "^1.48.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
+  "devDependencies": {
+    "@coderline/alphatab-vite": "^1.8.4",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "playwright": "^1.63.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.1"
+  }
+}
