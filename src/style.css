@@ -20,3 +20,13 @@
 .score-scroll{overscroll-behavior:contain;scrollbar-gutter:stable}
 @media(max-width:1200px){.score-playback{align-items:flex-start;flex-wrap:wrap}.score-follow-tools{margin-left:auto}}
 @media(max-width:720px){.score-playback{padding:10px 12px;gap:8px}.score-position{font-size:10px}.score-position strong{font-size:12px}.score-legend{font-size:9px;line-height:1.7}}
+
+/* Sidebar delete: overlays the end of the title only while the row is hovered or focused. */
+.project-row{position:relative;margin-bottom:4px}
+.project-row>.project-item{margin-bottom:0}
+.project-row:hover>.project-item:not(.active){background:#233b3c}
+.project-delete{position:absolute;top:50%;right:6px;transform:translateY(-50%);display:grid;place-items:center;width:28px;height:28px;border-radius:6px;color:#8fa9a0;background:#233b3c;box-shadow:-12px 0 10px #233b3c;opacity:0;pointer-events:none}
+.project-row.active>.project-delete{background:#2b4141;box-shadow:-12px 0 10px #2b4141}
+.project-row:hover>.project-delete,.project-row:focus-within>.project-delete{opacity:1;pointer-events:auto}
+.project-delete:hover{color:#f1b49e}
+@media(hover:none){.project-delete{opacity:1;pointer-events:auto}}

@@ -172,6 +172,7 @@ alphaTab의 재생선은 CSS transform으로 크기가 조정되므로 `width: 2
 | `POST /api/projects` | `{url}`로 분석 작업 생성 |
 | `GET /api/projects/{id}` | 전체 프로젝트 조회 |
 | `PUT /api/projects/{id}` | revision을 포함한 프로젝트 편집 저장 |
+| `DELETE /api/projects/{id}` | 프로젝트·편집 이력·`projects/<id>/` 폴더 삭제. 분석 중이면 409 |
 | `POST /api/projects/{id}/cancel` | 취소 요청 |
 | `POST /api/projects/{id}/retry` | 다시 분석 |
 | `POST /api/projects/{id}/revoice` | 튜닝·카포·구간별 카포 변경과 운지 재계산 |

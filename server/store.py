@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sqlite3
 import threading
 from datetime import datetime, timezone
@@ -72,3 +73,13 @@ def project_dir(pid):
     folder = DATA / 'projects' / pid
     folder.mkdir(exist_ok=True)
     return folder
+
+
+def delete_project(pid: str):
+    """Remove the project, its edit history, and its media/analysis folder."""
+    folder = project_dir(pid)
+    with LOCK, connection() as c:
+        if not c.execute('DELETE FROM projects WHERE id=?', (pid,)).rowcount:
+            raise KeyError(pid)
+        c.execute('DELETE FROM history WHERE project_id=?', (pid,))
+    shutil.rmtree(folder, ignore_errors=True)

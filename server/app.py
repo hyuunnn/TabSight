@@ -17,10 +17,10 @@ from . import pipeline
 from .export import gp5_bytes
 from .models import CapoSegment,Project
 from .music import assign_fingering,build_bars,TUNINGS,sounding_pitch,HARMONICS
-from .store import DATA,ROOT,get_project,list_projects,project_dir,save_project
+from .store import DATA,ROOT,delete_project,get_project,list_projects,project_dir,save_project
 
 app=FastAPI(title='TabSight',docs_url='/api/docs')
-app.add_middleware(CORSMiddleware,allow_origins=['http://127.0.0.1:5173','http://localhost:5173','http://127.0.0.1:8787','http://localhost:8787'],allow_methods=['GET','POST','PUT'],allow_headers=['Content-Type'])
+app.add_middleware(CORSMiddleware,allow_origins=['http://127.0.0.1:5173','http://localhost:5173','http://127.0.0.1:8787','http://localhost:8787'],allow_methods=['GET','POST','PUT','DELETE'],allow_headers=['Content-Type'])
 
 
 @app.get('/api/health')
@@ -68,6 +68,15 @@ def update(pid:str,body:Project):
     if any(b.start<a.end-.02 for a,b in zip(body.bars,body.bars[1:])):raise HTTPException(422,'마디 구간이 겹칩니다.')
     try:return save_project(body,edit=True,expected_revision=body.revision)
     except ValueError as e:raise HTTPException(409,str(e))
+
+
+@app.delete('/api/projects/{pid}')
+def delete(pid:str):
+    p=project(pid)
+    # A running job keeps writing to the project, so it must stop before its files go away.
+    if p.status in ['processing','queued']:raise HTTPException(409,'분석 중인 채보는 삭제할 수 없습니다. 분석을 취소한 뒤 삭제해 주세요.')
+    delete_project(pid);pipeline.CANCEL.pop(pid,None)
+    return {'status':'deleted'}
 
 
 @app.post('/api/projects/{pid}/cancel')
