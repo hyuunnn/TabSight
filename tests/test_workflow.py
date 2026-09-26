@@ -12,7 +12,8 @@ from server import pipeline
 from server.models import Project,Note,Bar,CapoSegment
 from server.music import assign_fingering,sounding_pitch,metadata_settings,choose_settings,candidates
 from server.export import gp5_bytes
-from server.store import ROOT,get_project,save_project
+from server.store import ROOT,connection,get_project,project_dir,save_project
+from server.vision import finger_positions
 
 client=TestClient(app)
 
@@ -137,3 +138,56 @@ def test_calibration_revoices_from_real_hand_positions():
     assert r.status_code==200
     assert r.json()['vision']['frames'][0]['positions']
     assert [n['midi'] for n in r.json()['notes']]==[40,64,67]
+
+
+AUTO_BOARD={'nut':[.8,.5],'fret12':[.5,.5],'width':.04,'source':'automatic','confidence':.35}
+MANUAL_BOARD={'nut':[.7,.5],'fret12':[.4,.5],'width':.035}
+
+def board_frames(board,times=(0,)):
+    hands=[[[.48,.5,0]]*21]
+    return [{'time':t,'hands':hands,'board':board,'positions':finger_positions(hands,board,16/9)} for t in times]
+
+def history_rows(pid):
+    with connection() as c:return c.execute('SELECT count(*) FROM history WHERE project_id=?',(pid,)).fetchone()[0]
+
+def test_delete_removes_project_history_and_files():
+    p=fixture_project();save_project(p);save_project(p,edit=True)
+    folder=project_dir(p.id);(folder/'audio.wav').write_bytes(b'x')
+    assert history_rows(p.id)==1
+    r=client.delete(f'/api/projects/{p.id}')
+    assert r.status_code==200 and r.json()=={'status':'deleted'}
+    assert client.get(f'/api/projects/{p.id}').status_code==404
+    assert p.id not in [x['id'] for x in client.get('/api/projects').json()]
+    assert history_rows(p.id)==0 and not folder.exists()
+    assert client.delete(f'/api/projects/{p.id}').status_code==404
+
+@pytest.mark.parametrize('status',['queued','processing'])
+def test_delete_refuses_running_analysis(status):
+    # The analysis job keeps writing to the project, so its files must stay until it stops.
+    p=fixture_project(status=status);save_project(p);media=project_dir(p.id)/'audio.wav';media.write_bytes(b'x')
+    r=client.delete(f'/api/projects/{p.id}')
+    assert r.status_code==409 and '분석을 취소한 뒤' in r.json()['detail']
+    assert get_project(p.id).status==status and media.exists()
+
+def test_calibration_reset_restores_automatic_result():
+    p=fixture_project(vision={'aspect':16/9,'frames':board_frames(AUTO_BOARD,[0,.5]),'calibration':None});save_project(p)
+    automatic=json.loads(json.dumps(p.vision));(project_dir(p.id)/'vision-result.json').write_text(json.dumps(automatic))
+    assert client.post(f'/api/projects/{p.id}/calibration/reset').status_code==409  # nothing manual to reset yet
+    manual=client.post(f'/api/projects/{p.id}/calibration',json=MANUAL_BOARD).json()
+    assert all(f['board']['source']=='manual' for f in manual['vision']['frames'])
+    rows=history_rows(p.id)
+    r=client.post(f'/api/projects/{p.id}/calibration/reset');restored=r.json()
+    assert r.status_code==200 and restored['vision']==automatic and get_project(p.id).vision==automatic
+    assert restored['revision']==manual['revision']+1 and history_rows(p.id)==rows+1  # undoable like other edits
+    assert [n['midi'] for n in restored['notes']]==[40,64,67]
+
+def test_calibration_reset_needs_the_automatic_result():
+    p=fixture_project(vision={'aspect':16/9,'frames':board_frames(AUTO_BOARD)});save_project(p)
+    manual=client.post(f'/api/projects/{p.id}/calibration',json=MANUAL_BOARD).json()
+    r=client.post(f'/api/projects/{p.id}/calibration/reset')
+    assert r.status_code==409 and '파일이 없어' in r.json()['detail']
+    kept=get_project(p.id);assert kept.revision==manual['revision'] and kept.vision['calibration']['source']=='manual'
+    q=fixture_project();save_project(q)  # e.g. an audio file: there are no frames to restore
+    client.post(f'/api/projects/{q.id}/calibration',json=MANUAL_BOARD)
+    r=client.post(f'/api/projects/{q.id}/calibration/reset')
+    assert r.status_code==200 and 'calibration' not in r.json()['vision']
