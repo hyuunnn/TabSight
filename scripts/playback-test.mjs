@@ -98,12 +98,12 @@ try{
  await seek(project.bars[12].start+.2);await waitBar(13);await visibleCursor();
  await page.getByLabel('악보 확대',{exact:true}).click();
  await page.waitForTimeout(700);await visibleCursor();
- await page.getByRole('button',{name:'TAB',exact:true}).click();
+ await page.getByRole('button',{name:'TAB + 오선보',exact:true}).click();
  await page.waitForTimeout(700);await visibleCursor();
  assert.match(await page.getByLabel('악보 현재 위치',{exact:true}).textContent(),/13마디/);
  report('확대·오선보 전환 후 재생 위치 유지');
 
- await page.getByRole('button',{name:'TAB + 오선보',exact:true}).click();
+ await page.getByRole('button',{name:'TAB',exact:true}).click();
  await page.setViewportSize({width:390,height:844});
  await page.waitForTimeout(700);
  await seek(project.bars[20].start+.2);await waitBar(21);await visibleCursor();
