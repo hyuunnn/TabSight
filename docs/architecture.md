@@ -108,7 +108,7 @@ sequenceDiagram
 
 ## 5. 편집·저장·실행 취소
 
-음표·마디 입력란은 로컬 초안을 편집한다. 저장 버튼을 누르면 전체 프로젝트 JSON을 `PUT`으로 보내며 서버가 음높이/운지 일치와 마디 중복 등을 검증한다. 튜닝·카포 변경과 지판 보정은 별도 API에서 운지를 재계산한 뒤 저장한다.
+음표·마디 입력란은 로컬 초안을 편집한다. 저장 버튼을 누르면 전체 프로젝트 JSON을 `PUT`으로 보내며 서버가 음높이/운지 일치와 마디 중복 등을 검증한다. 튜닝·카포 변경과 지판 보정은 별도 API에서 운지를 재계산한 뒤 저장한다. 수동 지판 보정은 모든 프레임의 지판 좌표를 덮어쓰며 새로고침 후에도 유지된다. `자동 인식으로 되돌리기`는 처음 영상 분석 결과인 `vision-result.json`을 다시 읽어 되돌린다.
 
 서버는 수정 전 JSON을 SQLite `history`에 넣고 `revision`을 올린다. 일반 저장 요청의 revision이 현재 값과 다르면 HTTP 409로 거절하므로 오래된 화면이 최신 변경을 덮어쓰지 않는다. 분석 진행률 저장은 편집 이력을 만들거나 revision을 올리지 않는다.
 
@@ -177,6 +177,7 @@ alphaTab의 재생선은 CSS transform으로 크기가 조정되므로 `width: 2
 | `POST /api/projects/{id}/retry` | 다시 분석 |
 | `POST /api/projects/{id}/revoice` | 튜닝·카포·구간별 카포 변경과 운지 재계산 |
 | `POST /api/projects/{id}/calibration` | 너트·12프렛·폭 보정과 운지 재계산 |
+| `POST /api/projects/{id}/calibration/reset` | 수동 지판 보정을 `vision-result.json`의 자동 인식 결과로 되돌리고 운지 재계산 |
 | `GET /api/projects/{id}/media/{kind}` | `video`, `audio`, `poster` 제공 |
 | `GET /api/projects/{id}/score/{fmt}` | `gp5`, `gp`, `json` 생성 |
 | `POST /api/import` | multipart `file`로 악보·미디어 가져오기, 최대 1GB |

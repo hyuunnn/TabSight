@@ -30,3 +30,7 @@
 .project-row:hover>.project-delete,.project-row:focus-within>.project-delete{opacity:1;pointer-events:auto}
 .project-delete:hover{color:#f1b49e}
 @media(hover:none){.project-delete{opacity:1;pointer-events:auto}}
+
+.vision-actions{display:flex;flex-wrap:wrap;column-gap:18px}
+.vision-note .text-button.reset-board{gap:5px;color:#8e9f7e}
+.vision-note .text-button.reset-board:hover{color:var(--teal)}
