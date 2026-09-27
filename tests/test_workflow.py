@@ -178,6 +178,13 @@ def test_repeated_out_of_range_notes_challenge_description():
     assert capo==5 and tuning!=[40,45,50,55,59,64]
     assert all(candidates(n.midi,tuning,capo) for n in notes)
 
+def test_custom_described_tuning_stays_in_the_comparison():
+    # Baritone Nashville is not a preset. A few notes below its reach start the comparison with the
+    # presets, but the rest fit it far better than any of them, so no preset may replace it.
+    nashville=[33,38,55,60,52,57]
+    notes=[Note(id=str(i),midi=m,start=i,end=i+.5) for i,m in enumerate(nashville*10+[31]*6)]
+    assert choose_settings(notes,nashville,0)==(nashville,0)
+
 def history_rows(pid):
     with connection() as c:return c.execute('SELECT count(*) FROM history WHERE project_id=?',(pid,)).fetchone()[0]
 
