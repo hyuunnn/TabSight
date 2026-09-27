@@ -117,6 +117,20 @@ def test_metadata_reads_note_names_nashville_and_capo_line():
     assert metadata_settings('Tuning: Nashville')[0]==[52,57,62,67,59,64]
     assert metadata_settings('Tuning: Standard\nCapo on 3rd fret')[:2]==([40,45,50,55,59,64],[3])
 
+def test_described_tuning_without_capo_is_played_without_capo(monkeypatch):
+    import numpy as np,soundfile as sf
+    p=fixture_project(status='queued',source='file',metadata={'description':'Tuning : ADGCEA (Baritone Nashville Tuning)'});save_project(p)
+    t=np.arange(16000*4)/16000;sf.write(project_dir(p.id)/'audio.wav',(.1*np.sin(2*np.pi*110*t)).astype('float32'),16000)
+    seen={}
+    def transcribe(y,sr,progress,cancelled):
+        seen['called']=True
+        return [Note(id=str(i),midi=m,start=i*.5,end=i*.5+.4) for i,m in enumerate([38,45,57,62,69])],'cpu'
+    monkeypatch.setattr(pipeline,'transcribe_audio',transcribe)
+    pipeline.run(p.id);q=get_project(p.id)
+    assert seen['called'] and q.status=='ready' and q.tuning==[33,38,55,60,52,57] and q.capo==0
+    assert q.metadata['tuning_source']==q.metadata['capo_source']=='description'
+    assert all(n.string for n in q.notes if n.technique!='percussion')
+
 def test_rearticulation_never_resurrects_old_note(tmp_path):
     p=fixture_project(notes=[Note(id='a',midi=64,start=0,end=2,string=1,fret=0),Note(id='b',midi=67,start=.5,end=1,string=1,fret=3)])
     path=tmp_path/'rearticulation.gp5';path.write_bytes(gp5_bytes(p));notes=inspect(path)['notes']

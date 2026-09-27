@@ -148,10 +148,13 @@ def run(pid):
         p=get_project(pid);p.notes=notes;p.duration=duration;p.tempo=tempo
         p.bars=build_bars(notes,duration,tempo,beat_times)
         tuning,capos,line=metadata_settings(p.metadata.get('description',''))
-        p.tuning,p.capo=choose_settings(notes,tuning,capos[0] if capos else None)
-        p.metadata['settings_source']='description' if line else 'audio-inference'
-        p.metadata['tuning_source']='description' if tuning else 'audio-inference'
-        p.metadata['capo_source']='description' if capos else 'audio-inference'
+        # A description that names the tuning but no capo means no capo. Guessing it from the
+        # pitch range instead picked capos the player never used (capo 4 on a baritone song).
+        capo=capos[0] if capos else 0 if tuning is not None else None
+        p.tuning,p.capo=choose_settings(notes,tuning,capo)
+        p.metadata['settings_source']='description' if tuning is not None else 'audio-inference'
+        p.metadata['tuning_source']='description' if tuning is not None else 'audio-inference'
+        p.metadata['capo_source']='description' if capo is not None else 'audio-inference'
         settings_conflict=tuning is not None and p.tuning!=tuning
         if settings_conflict:
             p.metadata['settings_source']='description-conflict'
@@ -159,7 +162,8 @@ def run(pid):
         p.metadata['settings_text']=line
         p.warnings=['줄·프렛 및 특수 주법은 추정 결과입니다. 검토 표시를 확인해 주세요.', '박자·마디 시작은 자동 추정입니다. 루바토와 못갖춘마디는 보정이 필요할 수 있습니다.']
         if not line:p.warnings.append('카포·튜닝을 확정할 설명 정보가 없어 음역으로 추정했습니다. 설정을 확인해 주세요.')
-        elif not capos:p.warnings.append('튜닝은 영상 설명을 참고했고, 카포는 음역과 가능한 운지로 추정했습니다.')
+        elif tuning is None:p.warnings.append(f'설명의 튜닝 표기를 읽지 못해 음역으로 추정했습니다({line.strip()[:60]}). 설정을 확인해 주세요.')
+        elif not capos:p.warnings.append('설명에 카포 표기가 없어 카포 없이 연주한 것으로 계산했습니다. 영상에 카포가 보이면 설정을 바꿔 주세요.')
         if settings_conflict:p.warnings.append('영상 설명의 튜닝으로 연주할 수 없는 저음이 반복되어 다른 튜닝을 제안했습니다. 원음과 비교해 설정을 확인해 주세요.')
         if len(capos)>1:p.warnings.append(f'설명에 카포 {", ".join(map(str,capos))}프렛이 있습니다. 구간별 카포 변경을 확인해 주세요.')
         update('운지와 연주 기법을 정리하는 중',.9)
