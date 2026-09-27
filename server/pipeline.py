@@ -17,6 +17,7 @@ import numpy as np
 
 from .models import Note,Project,STANDARD
 from .music import assign_fingering,build_bars,choose_settings,metadata_settings,suggest_techniques,tuning_name
+from .rhythm import bars_from_beats,track_beats
 from .store import DATA,get_project,project_dir,save_project
 
 EXECUTOR=ThreadPoolExecutor(max_workers=1,thread_name_prefix='tabsight')
@@ -151,29 +152,30 @@ def _prepare(pid,folder,update,event):
     save_project(p)
 
 
-def _transcribe(pid,folder,update,event):
-    """Transcribe with the tuning and capo the player confirmed; a guess never replaces them."""
-    started=time.monotonic();audio=folder/'audio.wav'
-    update('기타 음표를 듣는 중 · 첫 실행은 모델을 준비합니다',.18)
-    if not audio.exists() and (folder/'source.mp4').exists():_extract_audio(folder)
-    if not audio.exists():raise ValueError('준비된 음성이 없습니다. 다시 분석해 주세요.')
-    import soundfile as sf
+def draft_score(p,y,sr,update=lambda stage,progress:None):
+    """Turn the inferred notes in `p` into a draft: bars, fingering in the confirmed tuning and
+    capo, and technique candidates. The evaluation script calls this too, so it scores what the
+    app produces."""
     import librosa
-    y,sr=sf.read(audio,dtype='float32')
-    if y.ndim>1:y=y.mean(axis=1)
-    if sr!=16000:y=librosa.resample(y,orig_sr=sr,target_sr=16000);sr=16000
     duration=len(y)/sr
-    # Transcription takes most of the analysis time, so it gets most of the progress bar.
-    notes,device=transcribe_audio(y,sr,lambda f:update('기타 음표를 듣는 중',.18+.67*f),event.is_set)
-    if not notes:raise ValueError('기타 음표를 찾지 못했습니다. 연주가 잘 들리는 영상을 사용해 주세요.')
     update('박자와 마디를 정리하는 중',.86)
-    env=librosa.onset.onset_strength(y=y,sr=sr,hop_length=256)
-    tempo,beats=librosa.beat.beat_track(onset_envelope=env,sr=sr,hop_length=256,trim=False)
-    tempo=float(np.clip(np.asarray(tempo).reshape(-1)[0],30,240))
-    beat_times=librosa.frames_to_time(beats,sr=sr,hop_length=256)
-    p=get_project(pid);p.notes=notes;p.duration=duration;p.tempo=tempo
-    p.bars=build_bars(notes,duration,tempo,beat_times)
+    bars=None
+    try:
+        beats,strength=track_beats(y,sr)
+        bars=bars_from_beats(p.notes,duration,beats,strength)
+    except Exception:
+        # A missing model download or device problem falls back to the simpler beat tracker.
+        traceback.print_exc()
+    if bars:
+        tempo=float(np.median([b.tempo for b in bars]));beat_source='beat-this'
+    else:
+        env=librosa.onset.onset_strength(y=y,sr=sr,hop_length=256)
+        tempo,beats=librosa.beat.beat_track(onset_envelope=env,sr=sr,hop_length=256,trim=False)
+        tempo=float(np.clip(np.asarray(tempo).reshape(-1)[0],30,240))
+        bars=build_bars(p.notes,duration,tempo,librosa.frames_to_time(beats,sr=sr,hop_length=256));beat_source='librosa'
+    p.duration=duration;p.tempo=tempo;p.bars=bars
     p.warnings=['줄·프렛 및 특수 주법은 추정 결과입니다. 검토 표시를 확인해 주세요.', '박자·마디 시작은 자동 추정입니다. 루바토와 못갖춘마디는 보정이 필요할 수 있습니다.']
+    if beat_source=='librosa':p.warnings.append('비트 모델을 사용하지 못해 마디를 4/4로 균등하게 나눴습니다. 마디 시작과 박자를 확인해 주세요.')
     capos=(p.metadata.get('detected_settings') or {}).get('capos') or []
     if len(capos)>1 and not p.capo_segments:p.warnings.append(f'설명에 카포 {", ".join(map(str,capos))}프렛이 있습니다. 구간별 카포 변경을 확인해 주세요.')
     update('운지와 연주 기법을 정리하는 중',.9)
@@ -189,7 +191,26 @@ def _transcribe(pid,folder,update,event):
             p.warnings.append(f'확인한 튜닝·카포로 낼 수 없는 음이 반복됩니다. 카포가 맞다면 소리로는 {tuning_name(suggested)} 튜닝이 더 맞아 보입니다. 원음과 비교해 튜닝·카포를 확인해 주세요.')
     suggest_techniques(p,y,sr)
     p.warnings.append('특수 주법 자동 표기는 실험적입니다. 원본 연주와 비교해 수정해 주세요.')
-    p.warnings.append('파일의 리듬은 64분음표 단위까지 표현합니다. 같은 줄의 잔향은 다음 음이 시작할 때 끝나도록 정리합니다.')
+    p.warnings.append('리듬은 박마다 가장 단순한 음가(셋잇단 포함)로 맞추고, 베이스(4~6번 줄)가 멜로디 아래에서 이어질 때는 두 성부로 씁니다. 원본과 비교해 확인해 주세요.')
+    return {**stats,'beat_model':beat_source}
+
+
+def _transcribe(pid,folder,update,event):
+    """Transcribe with the tuning and capo the player confirmed; a guess never replaces them."""
+    started=time.monotonic();audio=folder/'audio.wav'
+    update('기타 음표를 듣는 중 · 첫 실행은 모델을 준비합니다',.18)
+    if not audio.exists() and (folder/'source.mp4').exists():_extract_audio(folder)
+    if not audio.exists():raise ValueError('준비된 음성이 없습니다. 다시 분석해 주세요.')
+    import soundfile as sf
+    import librosa
+    y,sr=sf.read(audio,dtype='float32')
+    if y.ndim>1:y=y.mean(axis=1)
+    if sr!=16000:y=librosa.resample(y,orig_sr=sr,target_sr=16000);sr=16000
+    # Transcription takes most of the analysis time, so it gets most of the progress bar.
+    notes,device=transcribe_audio(y,sr,lambda f:update('기타 음표를 듣는 중',.18+.67*f),event.is_set)
+    if not notes:raise ValueError('기타 음표를 찾지 못했습니다. 연주가 잘 들리는 영상을 사용해 주세요.')
+    p=get_project(pid);p.notes=notes
+    stats=draft_score(p,y,sr,update)
     p.metrics={'audio_model':'GAPS paper checkpoint (2024)','device':device,**stats,
                'accuracy_verified':False,'note_count':len(p.notes)}
     if stats['unassigned']:p.warnings.append(f'{stats["unassigned"]}개 음의 운지가 미정입니다. 내보내기 전에 수정해 주세요.')

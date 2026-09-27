@@ -15,7 +15,7 @@ flowchart TD
     M --> C{브라우저: 사용자가 튜닝·카포 확인}
     C -->|POST /start| Q[채보 큐: 한 번에 한 곡]
     Q --> G[GAPS: 음표 추론]
-    G --> B[비트 / 운지]
+    G --> B[Beat This!: 비트·마디 / 운지]
     B --> F[주법 후보]
     F --> D
     A --> E[PyGuitarPro: GP5 생성]
@@ -34,8 +34,8 @@ flowchart TD
 2. **미디어 준비**: yt-dlp로 영상을 내려받고 제목·채널·설명을 보관한다. FFmpeg로 16kHz 모노 WAV와 미리보기 이미지를 만든다. 설명에서 튜닝·카포를 읽어 설정 칸을 미리 채우고 `awaiting_settings`로 멈춘다.
 3. **설정 확인**: 사용자가 원본 영상을 재생하며 튜닝·카포를 확인하거나 고친 뒤 채보를 시작한다. 설명에서 튜닝을 찾지 못하면 칸을 비워 두며, 튜닝과 카포를 입력해야 시작할 수 있다. 확인한 값은 `POST /start`로 저장되고 채보 큐에 들어간다.
 4. **음표 추론**: GAPS 체크포인트를 처음 필요할 때 내려받고 메모리에 로드한다. 음성을 나누어 음높이, 시작·끝, 세기를 추론한다.
-5. **악보 골격 생성**: 비트를 추적해 4/4 마디 초안을 만든다.
-6. **운지와 주법 정리**: 확인한 튜닝·카포로 음높이를 유지한 채 연주 가능한 줄·프렛을 고르고, 신호·운지 규칙으로 주법 후보를 표시한다. 배치하지 못한 음이 반복되면 더 맞는 튜닝을 제안만 하고 설정은 바꾸지 않는다.
+5. **악보 골격 생성**: Beat This!로 비트와 마디 첫 박을 추론해 박자표·못갖춘마디가 있는 마디 초안을 만든다. 비트 모델도 처음 필요할 때 내려받는다.
+6. **운지와 주법 정리**: 확인한 튜닝·카포로 음높이를 유지한 채 곡 전체에서 연주 가능한 줄·프렛을 고르고, 신호·운지 규칙으로 주법 후보를 표시한다. 배치하지 못한 음이 반복되면 더 맞는 튜닝을 제안만 하고 설정은 바꾸지 않는다.
 7. **완료**: 결과를 저장하고 `ready`로 바꾼다. 브라우저가 미리보기 GP5를 요청해 alphaTab으로 표시한다. `ready`는 초안 생성 완료를 뜻하며 정답 검증 완료를 뜻하지 않는다.
 
 화면에서는 분석 과정을 영상 준비, 음표 추론, 운지 정리 세 단계로 묶어 진행률과 함께 보여 준다. 영상 준비가 끝나면 진행 화면 대신 설정 확인 화면이 나타나고, 연습실 목록에는 `튜닝·카포를 확인해 주세요`가 표시된다.
@@ -83,11 +83,13 @@ sequenceDiagram
 | [src/types.ts](../src/types.ts) | 프런트엔드 데이터 타입 |
 | [server/app.py](../server/app.py) | HTTP API, 요청 검증, 가져오기·내보내기 연결 |
 | [server/pipeline.py](../server/pipeline.py) | 준비·채보 작업 큐, 미디어 준비, GAPS 실행, 단계 연결, 취소·오류 처리 |
-| [server/music.py](../server/music.py) | 설명의 튜닝·카포 읽기, 튜닝 제안, 운지 탐색, 마디, 주법 규칙 |
+| [server/music.py](../server/music.py) | 설명의 튜닝·카포 읽기, 튜닝 제안, 곡 전체 운지 탐색, 주법 규칙 |
+| [server/rhythm.py](../server/rhythm.py) | Beat This! 비트 추론, 박자·마디선·못갖춘마디, 박 단위 양자화와 성부 |
 | [server/models.py](../server/models.py) | 프로젝트·음표·마디의 데이터 형식과 기본 검증 |
 | [server/store.py](../server/store.py) | SQLite 저장, revision과 편집 이력, 데이터 경로 |
-| [server/export.py](../server/export.py) | 시간 양자화, 트랙·타이·주법 구성, GP5 쓰기 |
+| [server/export.py](../server/export.py) | 트랙·성부·셋잇단·타이·주법 구성, GP5 쓰기 |
 | [scripts/score-bridge.mjs](../scripts/score-bridge.mjs) | alphaTab의 GP 읽기와 GP7 변환을 Node에서 실행 |
+| [scripts/evaluate.py](../scripts/evaluate.py), [scripts/reference-tab.mjs](../scripts/reference-tab.mjs) | 레퍼런스 악보와 연주 음원으로 채보 결과 측정. 앱 실행에는 쓰지 않음 |
 
 ## 4. 데이터가 의미하는 것
 
@@ -101,7 +103,7 @@ sequenceDiagram
 | `notes[].fret` | 카포 기준 상대 프렛 0~24. 하모닉스에서는 터치 프렛 |
 | `tuning` | **6번→1번 줄** 순서의 개방현 MIDI. Standard는 `[40,45,50,55,59,64]` |
 | `capo / capo_segments` | 기본 카포 0~12와 특정 시각부터 적용할 카포. 해당 시각 이전의 가장 최근 구간 사용 |
-| `bars` | 각 마디의 실제 시작·끝 초, 박자, 템포 |
+| `bars` | 각 마디의 실제 시작·끝 초, 박자, 템포, 추적한 박 시각(`beats`, 초). `beats`가 비었거나 마디와 맞지 않으면 균등한 박으로 본다 |
 | `confidence / reviewed` | 검토 우선순위를 위한 값 / 사용자가 검토했는지 여부 |
 | `evidence` | `audio`, `technique-candidate`, `manual` 등 추정·수정 근거. 이전 버전 분석에는 `vision`이 남아 있을 수 있음 |
 | `metadata / metrics` | 원본 설명과 설정 출처 / 분석 실행 시의 집계. `detected_settings`는 설명에서 읽은 튜닝·카포와 그 줄, `settings_confirmed`는 채보 전 확인 여부, `tuning_source`·`capo_source`는 `description`(설명 값 그대로) 또는 `manual`(직접 입력·수정), `suggested_tuning`은 확인한 설정으로 배치하지 못한 음이 반복될 때의 제안. 이전 버전 분석에는 `audio-inference`, `settings_source`가 남아 있을 수 있음 |
@@ -123,14 +125,15 @@ sequenceDiagram
 
 ## 6. 영상과 악보의 동기화
 
-GP 악보는 tick, 원본 영상은 초를 사용한다. [Score.tsx](../src/Score.tsx)는 각 마디 안에서 다음처럼 선형 변환한다.
+GP 악보는 tick, 원본 영상은 초를 사용한다. [Score.tsx](../src/Score.tsx)는 각 마디 안에서 박 단위로 선형 변환한다([types.ts](../src/types.ts)의 `barFraction`, `barTime`).
 
 ```text
-ratio = (영상 시간 - 마디 시작 초) / (마디 끝 초 - 마디 시작 초)
+k     = 영상 시간이 속한 박 (마디의 beats 기준)
+ratio = (k + (영상 시간 - k번째 박 시각) / (그 박의 길이)) / 마디의 박 수
 tick  = alphaTab 마디 시작 tick + ratio × alphaTab 마디 길이 tick
 ```
 
-역변환으로 합성음의 위치를 원본 시간으로 바꾼다. 원음 모드에서는 영상의 시간 갱신이 악보 커서를 움직인다. 합성음 모드에서는 alphaTab이 재생을 주도하고 영상은 일시정지한 채 해당 위치로 탐색된다. 두 오디오를 동시에 재생하는 방식은 아니다.
+박 시각이 없는 마디(이전 버전 분석, 가져온 악보, 편집한 마디)는 박을 균등하게 나누므로 마디 안 선형 변환과 같다. 역변환으로 합성음의 위치를 원본 시간으로 바꾼다. 원음 모드에서는 영상의 시간 갱신이 악보 커서를 움직인다. 합성음 모드에서는 alphaTab이 재생을 주도하고 영상은 일시정지한 채 해당 위치로 탐색된다. 두 오디오를 동시에 재생하는 방식은 아니다.
 
 원음 모드에서는 alphaTab의 합성기가 일시정지 상태이므로 내장 재생 강조·스크롤만으로는 충분하지 않다. `tickCache.findBeat`와 렌더러의 마디 좌표를 사용해 두 재생 모드에 공통으로 음표 강조와 자동 넘김을 적용한다. 파란 배경은 현재 마디, 진한 세로선은 재생 위치이며 상단에 마디·박을 표시한다. 악보 줄이 바뀔 때 `.score-scroll` 내부만 이동한다. 자동 넘김을 끌 수 있고, `현재 위치로` 버튼은 현재 줄로 즉시 복귀한다.
 
@@ -140,7 +143,7 @@ alphaTab의 재생선은 CSS transform으로 크기가 조정되므로 `width: 2
 
 악보 클릭 시 해당 마디의 시간을 계산하고 같은 줄에서 시작 시간이 가까운 원본 음표를 찾는다. 현재 허용 범위는 0.3초다. 렌더링된 타이 조각이 원본 음표 하나와 완전히 일대일로 대응하지는 않는다.
 
-마디 템포·박자를 수정하면 마디 경계를 다시 계산한다. 이때 음표의 원본 시작·끝 초는 그대로 유지한다. GP 출력의 리듬 양자화와 정수 BPM 때문에 원본과 출력 파일 길이가 조금 달라질 수 있다.
+마디 템포·박자를 수정하면 그 마디부터 경계를 다시 계산하고 박 시각을 지운다. 이때 음표의 원본 시작·끝 초는 그대로 유지한다. GP 출력의 리듬 양자화와 마디별 정수 BPM 때문에 원본과 출력 파일 길이가 조금 달라질 수 있다.
 
 ## 7. 저장 위치
 
@@ -150,7 +153,9 @@ alphaTab의 재생선은 CSS transform으로 크기가 조정되므로 `width: 2
 .data/
 ├── tabsight.sqlite3             # 프로젝트 JSON과 revision별 편집 이력
 ├── models/
-│   └── gaps/                   # GAPS 체크포인트와 다운로드 메타데이터
+│   ├── gaps/                   # GAPS 체크포인트와 다운로드 메타데이터
+│   └── beat-this/final0.ckpt   # Beat This! 비트 모델
+├── eval/                       # 평가용 레퍼런스 악보·음원·GAPS 결과 (scripts/evaluate.py)
 └── projects/<project-id>/
     ├── source.mp4 / audio.wav / poster.jpg
     ├── source.info.json        # YouTube 다운로드 정보

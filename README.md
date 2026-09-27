@@ -15,7 +15,7 @@ YouTube 핑거스타일 기타 연주를 **로컬 AI로 채보**하고, 초안�
     </td>
     <td width="50%" valign="top">
       <b>로컬 AI 분석</b><br>
-      음표(GAPS)를 내 컴퓨터에서 분석하고, 연주 가능한 운지를 고릅니다.<br><br>
+      음표(GAPS)와 박자(Beat This!)를 내 컴퓨터에서 분석하고, 곡 전체에서 연주 가능한 운지를 고릅니다.<br><br>
       <img src="docs/images/analyzing.png" alt="분석 중 화면. 음표 추론 단계와 진행률이 표시되어 있다.">
     </td>
   </tr>

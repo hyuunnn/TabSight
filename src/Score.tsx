@@ -1,7 +1,7 @@
 import {useEffect,useRef,useState} from 'react';
 import * as at from '@coderline/alphatab';
 import {LoaderCircle,Music2} from 'lucide-react';
-import {type Project,type Note} from './types';
+import {type Project,type Note,barFraction,barTime} from './types';
 
 export type ScoreControl={play:()=>boolean;pause:()=>void;seek:(time:number)=>void;speed:(rate:number)=>void;isReady:()=>boolean;follow:()=>void};
 type Props={project:Project;staff:boolean;zoom:number;time:number;followPlayback:boolean;onSelect:(note:Note)=>void;onSeek:(time:number)=>void;onPosition:(time:number)=>void;onPlaying:(value:boolean)=>void;control:React.RefObject<ScoreControl|null>};
@@ -10,9 +10,9 @@ export default function Score(props:Props){
  const host=useRef<HTMLDivElement>(null);const apiRef=useRef<at.AlphaTabApi|null>(null);const latest=useRef(props);latest.current=props;
  const followRef=useRef<(()=>void)|null>(null);
  const [busy,setBusy]=useState(true);const [error,setError]=useState('');
- const toTick=(time:number)=>{const p=latest.current.project;const api=apiRef.current;if(!api?.score)return 0;const idx=Math.max(0,p.bars.findLastIndex(b=>b.start<=time));const b=p.bars[idx];const mb=api.score.masterBars[idx];return mb&&b?mb.start+Math.max(0,Math.min(1,(time-b.start)/(b.end-b.start)))*mb.calculateDuration():0;};
- const fromTick=(tick:number)=>{const api=apiRef.current;const p=latest.current.project;if(!api?.score)return 0;const i=api.score.masterBars.findLastIndex(b=>b.start<=tick);const mb=api.score.masterBars[i];const b=p.bars[i];return b&&mb?b.start+(tick-mb.start)/mb.calculateDuration()*(b.end-b.start):0;};
- const canonical=(n:at.model.Note)=>{const p=latest.current.project;const bi=n.beat.voice.bar.index;const b=p.bars[bi];const mb=n.beat.voice.bar.masterBar;if(!b)return undefined;const t=b.start+n.beat.playbackStart/mb.calculateDuration()*(b.end-b.start);const candidates=p.notes.filter(x=>(n.beat.voice.bar.staff.isPercussion?x.technique==='percussion':x.string===7-n.string)&&Math.abs(x.start-t)<.3);return candidates.sort((a,b)=>Math.abs(a.start-t)-Math.abs(b.start-t))[0];};
+ const toTick=(time:number)=>{const p=latest.current.project;const api=apiRef.current;if(!api?.score)return 0;const idx=Math.max(0,p.bars.findLastIndex(b=>b.start<=time));const b=p.bars[idx];const mb=api.score.masterBars[idx];return mb&&b?mb.start+barFraction(b,time)*mb.calculateDuration():0;};
+ const fromTick=(tick:number)=>{const api=apiRef.current;const p=latest.current.project;if(!api?.score)return 0;const i=api.score.masterBars.findLastIndex(b=>b.start<=tick);const mb=api.score.masterBars[i];const b=p.bars[i];return b&&mb?barTime(b,(tick-mb.start)/mb.calculateDuration()):0;};
+ const canonical=(n:at.model.Note)=>{const p=latest.current.project;const bi=n.beat.voice.bar.index;const b=p.bars[bi];const mb=n.beat.voice.bar.masterBar;if(!b)return undefined;const t=barTime(b,n.beat.playbackStart/mb.calculateDuration());const candidates=p.notes.filter(x=>(n.beat.voice.bar.staff.isPercussion?x.technique==='percussion':x.string===7-n.string)&&Math.abs(x.start-t)<.3);return candidates.sort((a,b)=>Math.abs(a.start-t)-Math.abs(b.start-t))[0];};
  useEffect(()=>{
   if(!host.current)return;
   const element=host.current;

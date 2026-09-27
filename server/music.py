@@ -137,8 +137,79 @@ def unplayable_reason(p: Project, out_of_range, crowded):
     return f'이 카포·튜닝에서는 {len(out_of_range)+len(crowded)}개 음을 원음대로 배치할 수 없습니다. ' + ', '.join(parts) + '.'
 
 
-def assign_fingering(p: Project, *, strict=False):
-    """Beam search over simultaneous notes; a string cannot sound two pitches at once."""
+# Costs for choosing strings and frets, fitted to 22 reference tabs (Sungha Jung, Masaaki Kishibe)
+# with `scripts/evaluate.py tune`: the mean of string accuracy on the tabs' own notes and on GAPS notes.
+FINGERING = {
+    'fret': .02,       # per fret above the capo, for each fretted note
+    'open': .1,        # bonus for an open string
+    'span': .5,        # per fret a chord stretches beyond span_free
+    'span_free': 3,
+    'move': .25,       # per fret the hand shifts between consecutive groups
+    'rest': .25,       # seconds between onsets that halve the cost of a shift
+    'cut': .6,         # for stopping a still-ringing note on the same string
+    'ring': 1.,        # seconds of remaining ring at which cutting costs the full amount
+}
+REPLUCK = 10.          # a string plucked again within 60 ms: a hard limit, not a preference
+
+
+def _span_cost(frets, w):
+    return w['span']*max(0,max(frets)-min(frets)-w['span_free']) if frets else 0.
+
+
+def _group_options(group, p, w, width, out_of_range, crowded):
+    """The cheapest ways to finger one group of simultaneous notes, one string per note."""
+    states = [(0., ())]
+    for n in group:
+        capo = p.capo_at(n.start)
+        opts = (harmonic_candidates if n.technique=='harmonic' else candidates)(n.midi, p.tuning, capo)
+        if not opts and n.technique == 'harmonic' and candidates(n.midi, p.tuning, capo):
+            # After a tuning change there may be no natural harmonic at this pitch. Keep the
+            # note as a fretted one and leave the harmonic as a suggestion to review.
+            n.technique = 'normal'
+            n.evidence = [e for e in n.evidence if e != 'harmonic-candidate'] + ['harmonic-candidate']
+            opts = candidates(n.midi, p.tuning, capo)
+        if not opts:
+            out_of_range.append(n)
+            n.string, n.fret, n.confidence = 0,0,.1
+            continue
+        next_states = []
+        for cost, placed in states:
+            used = {s for _,s,_ in placed}
+            frets = [f for _,_,f in placed if f]
+            before = _span_cost(frets, w)
+            for string, fret in opts:
+                if string in used:
+                    continue
+                local = w['fret']*fret if fret else -w['open']
+                local += _span_cost(frets+[fret] if fret else frets, w) - before
+                next_states.append((cost+local, placed+((n,string,fret),)))
+        if next_states:
+            states = sorted(next_states, key=lambda s:s[0])[:width]
+        else:
+            # More simultaneous notes than physically available strings: preserve and flag.
+            crowded.append(n)
+            n.string, n.fret, n.confidence = 0,0,.1
+    return [s for s in states if s[1]]
+
+
+def _hand(placed):
+    """Where the index finger can sit to reach every fretted note: frets [lo, hi], or None."""
+    frets = [f for _,_,f in placed if f]
+    if not frets:
+        return None
+    lo, hi = max(frets)-3, min(frets)
+    return (max(1, lo), hi) if lo <= hi else (hi, hi)
+
+
+def assign_fingering(p: Project, *, strict=False, weights=None, width=24):
+    """Choose strings and frets for the whole piece at once (Viterbi over note groups).
+
+    Each group of simultaneous notes gets its cheapest chord shapes as candidates. Moving between
+    them costs the hand shift, which is cheaper after a longer gap, plus a penalty for stopping a
+    note that is still ringing on the same string. The path carries the hand position through
+    open-string groups and the ringing state of each string.
+    """
+    w = {**FINGERING, **(weights or {})}
     notes = sorted((n for n in p.notes if n.technique != 'percussion'), key=lambda n:(n.start,n.midi))
     groups = []
     for note in notes:
@@ -146,51 +217,51 @@ def assign_fingering(p: Project, *, strict=False):
             groups.append([note])
         else:
             groups[-1].append(note)
-    previous_position = 3.
     out_of_range, crowded = [], []
-    for group in groups:
-        # Missing notes are kept explicitly unassigned instead of changing pitch.
-        states = [(0., [], set())]
-        for n in group:
-            capo = p.capo_at(n.start)
-            opts = (harmonic_candidates if n.technique=='harmonic' else candidates)(n.midi, p.tuning, capo)
-            if not opts and n.technique == 'harmonic' and candidates(n.midi, p.tuning, capo):
-                # After a tuning change there may be no natural harmonic at this pitch. Keep the
-                # note as a fretted one and leave the harmonic as a suggestion to review.
-                n.technique = 'normal'
-                n.evidence = [e for e in n.evidence if e != 'harmonic-candidate'] + ['harmonic-candidate']
-                opts = candidates(n.midi, p.tuning, capo)
-            if not opts:
-                out_of_range.append(n)
-                n.string, n.fret, n.confidence = 0,0,.1
-                continue
-            next_states = []
-            for cost, placements, used in states:
-                for string,fret in opts:
-                    if string in used:
-                        continue
-                    local = .06*fret + .12*abs(max(1,fret)-previous_position)
-                    if fret == 0:
-                        local -= .25
-                    frets = [f for _,_,f in placements if f > 0] + ([fret] if fret > 0 else [])
-                    if frets and max(frets)-min(frets) > 5:
-                        local += (max(frets)-min(frets)-5)*1.4
-                    next_states.append((cost+local,placements+[(n,string,fret)],used|{string}))
-            if next_states:
-                states = sorted(next_states,key=lambda s:s[0])[:24]
-            else:
-                # More simultaneous notes than physically available strings: preserve and flag.
-                crowded.append(n)
-                n.string,n.fret,n.confidence = 0,0,.1
-        if states:
-            placements = states[0][1]
-            for n,string,fret in placements:
-                n.string,n.fret = string,int(fret)
+    layers = [(g[0].start, opts) for g in groups if (opts := _group_options(g, p, w, width, out_of_range, crowded))]
+    back = []
+    for li, (start, opts) in enumerate(layers):
+        k = len(opts)
+        emit = np.array([c for c,_ in opts])
+        hands = [_hand(placed) for _,placed in opts]
+        fretted = np.array([h is not None for h in hands])
+        lo = np.array([h[0] if h else np.nan for h in hands]); hi = np.array([h[1] if h else np.nan for h in hands])
+        if not li:
+            value, back = emit, [None]
+            path_lo, path_hi = lo.copy(), hi.copy()
+            busy, busy_pitch, busy_on = np.zeros((k,7)), np.full((k,7), -1), np.full((k,7), -1e9)
+        else:
+            gap = start - layers[li-1][0]
+            dist = np.maximum(0, np.maximum(lo[None,:]-path_hi[:,None], path_lo[:,None]-hi[None,:]))
+            dist = np.where(np.isnan(dist) | ~fretted[None,:], 0, dist)
+            total = value[:,None] + emit[None,:] + w['move']*dist/(1+gap/w['rest'])
+            for j,(_,placed) in enumerate(opts):
+                for n,string,_ in placed:
+                    ringing = np.clip((busy[:,string]-n.start)/w['ring'], 0, 1)
+                    ringing[busy_pitch[:,string] == n.midi] = 0  # playing the same note again is not a cut
+                    total[:,j] += w['cut']*ringing
+                    # No string is plucked twice within 60 ms; such notes are a chord split by the grouping.
+                    total[:,j] += REPLUCK*(n.start-busy_on[:,string] < .06)
+            best = np.argmin(total, axis=0)
+            value = total[best, np.arange(k)]
+            back.append(best)
+            prev_lo, prev_hi = path_lo[best], path_hi[best]
+            overlap = ~np.isnan(prev_lo) & (dist[best, np.arange(k)] == 0)
+            path_lo = np.where(~fretted, prev_lo, np.where(overlap, np.fmax(prev_lo, lo), lo))
+            path_hi = np.where(~fretted, prev_hi, np.where(overlap, np.fmin(prev_hi, hi), hi))
+            busy, busy_pitch, busy_on = busy[best].copy(), busy_pitch[best].copy(), busy_on[best].copy()
+        for j,(_,placed) in enumerate(opts):
+            for n,string,_ in placed:
+                busy[j,string], busy_pitch[j,string], busy_on[j,string] = n.end, n.midi, n.start
+    if layers:
+        j = int(np.argmin(value))
+        for li in range(len(layers)-1, -1, -1):
+            for n,string,fret in layers[li][1][j][1]:
+                n.string, n.fret = string, int(fret)
                 # This is a review priority, not a calibrated correctness probability.
                 n.confidence = min(n.confidence, .58)
-            fs = [f for _,_,f in placements if f]
-            if fs:
-                previous_position = float(np.median(fs))
+            if back[li] is not None:
+                j = int(back[li][j])
     if strict and (out_of_range or crowded):
         raise ValueError(unplayable_reason(p, out_of_range, crowded) + ' 줄 튜닝의 옥타브와 카포를 확인해 주세요.')
     return {'unassigned':len(out_of_range)+len(crowded)}

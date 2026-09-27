@@ -4,6 +4,7 @@ import subprocess
 import uuid
 
 import guitarpro
+import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
@@ -144,6 +145,8 @@ def test_described_tuning_without_capo_is_played_without_capo(monkeypatch):
         seen['called']=True
         return [Note(id=str(i),midi=m,start=i*.5,end=i*.5+.4) for i,m in enumerate([38,45,57,62,69])],'cpu'
     monkeypatch.setattr(pipeline,'transcribe_audio',transcribe)
+    # Beats every half second, a downbeat every four: no beat model download in the tests.
+    monkeypatch.setattr(pipeline,'track_beats',lambda y,sr:(np.arange(0,4,.5),np.array([.9 if i%4==0 else .1 for i in range(8)])))
     # Nothing is transcribed until the player confirms the settings the description filled in.
     pipeline.run(p.id);q=get_project(p.id)
     assert 'called' not in seen and q.status=='awaiting_settings' and q.tuning==[33,38,55,60,52,57] and q.capo==0
@@ -206,3 +209,68 @@ def test_delete_refuses_running_analysis(status):
     r=client.delete(f'/api/projects/{p.id}')
     assert r.status_code==409 and '분석을 취소한 뒤' in r.json()['detail']
     assert get_project(p.id).status==status and media.exists()
+
+
+def test_bars_follow_tracked_beats_with_pickup_and_three_four():
+    from server.rhythm import bars_from_beats,bar_beats
+    beats=np.arange(1,13)*.5  # 0.5 ... 6.0 s, slightly uneven below
+    beats[5]+=.04
+    strength=np.array([.9 if i%3==1 else .1 for i in range(len(beats))])
+    notes=[Note(id='pickup',midi=64,start=.5,end=.9)]+[Note(id=str(i),midi=64,start=t,end=t+.3) for i,t in enumerate(beats[1:])]
+    bars=bars_from_beats(notes,6.5,beats,strength)
+    assert (bars[0].numerator,bars[0].denominator,bars[0].start)==(1,4,.5)  # one-beat pickup before the first downbeat
+    assert {(b.numerator,b.denominator) for b in bars[1:-1]}=={(3,4)}
+    assert bars[1].start==1.0 and bar_beats(bars[2])[2]==pytest.approx(beats[6])  # tracked, not evenly spread
+    assert all(any(b.start<=n.start<b.end for b in bars) for n in notes)
+
+def test_edited_bar_beats_fall_back_to_equal_steps():
+    from server.rhythm import bar_beats
+    assert bar_beats(Bar(start=0,end=2,beats=[0,.4,1.1,1.5]))==[0,.4,1.1,1.5]
+    assert bar_beats(Bar(start=1,end=3,beats=[0,.4,1.1,1.5]))==[1,1.5,2,2.5]  # moved bar: stale beats ignored
+    assert bar_beats(Bar(start=0,end=3,numerator=6,denominator=8))==[0,1.5]
+
+def test_triplet_beats_are_written_as_triplets(tmp_path):
+    p=fixture_project(bars=[Bar(start=0,end=4,tempo=60,beats=[0,1,2,3])],duration=4,
+      notes=[Note(id=str(i),midi=64+i,start=t,end=t+.3,string=1,fret=i) for i,t in enumerate([0,1/3,2/3,1,1.5,2,3])])
+    song=guitarpro.parse(io.BytesIO(gp5_bytes(p)),encoding='utf-8')
+    beats=[b for b in song.tracks[0].measures[0].voices[0].beats if b.notes]
+    assert [b.duration.tuplet.enters for b in beats[:3]]==[3,3,3] and beats[3].duration.tuplet.enters==1
+    path=tmp_path/'triplets.gp5';path.write_bytes(gp5_bytes(p));notes=inspect(path)['notes']
+    assert [round(n['start'],3) for n in notes]==[0,.333,.667,1,1.5,2,3]
+    assert [n['midi'] for n in notes]==[64+i for i in range(7)]
+
+def test_bass_under_a_moving_melody_is_a_second_voice(tmp_path):
+    p=fixture_project(notes=[Note(id='bass',midi=40,start=0,end=2,string=6,fret=0)]+[Note(id=f'm{i}',midi=64+i%2*3,start=i*.25,end=i*.25+.2,string=1,fret=i%2*3) for i in range(8)])
+    song=guitarpro.parse(io.BytesIO(gp5_bytes(p)),encoding='utf-8')
+    melody,bass=song.tracks[0].measures[0].voices
+    assert [n.value for b in bass.beats for n in b.notes]==[0] and bass.beats[0].duration.value==1  # whole note under the melody
+    assert len([b for b in melody.beats if b.notes])==8 and all(b.duration.value==8 for b in melody.beats[:8])
+    path=tmp_path/'voices.gp5';path.write_bytes(gp5_bytes(p))
+    gp=tmp_path/'voices.gp';subprocess.run(['node',str(ROOT/'scripts/score-bridge.mjs'),'convert',str(path),str(gp)],cwd=ROOT,check=True)
+    for notes in [inspect(path)['notes'],inspect(gp)['notes']]:
+        assert len(notes)==9 and next(n for n in notes if n['midi']==40)['end']==pytest.approx(2)
+
+
+def _voice_lengths_fill_bars(song):
+    for track in song.tracks:
+        for m in track.measures:
+            full=m.header.timeSignature.numerator*3840//m.header.timeSignature.denominator.value
+            for v in m.voices:
+                if v.beats:assert sum(b.duration.time for b in v.beats)==full
+
+def test_quick_same_string_notes_get_a_finer_grid_not_a_collision():
+    # 40 ms apart on one string at 60 BPM: an eighth-note grid would put both on one tick.
+    p=fixture_project(bars=[Bar(start=0,end=4,tempo=60,beats=[0,1,2,3])],duration=4,
+      notes=[Note(id='a',midi=64,start=1,end=1.04,string=1,fret=0),Note(id='b',midi=66,start=1.04,end=1.4,string=1,fret=2),
+             Note(id='late',midi=67,start=1.97,end=2.2,string=1,fret=3),Note(id='on',midi=69,start=2,end=2.5,string=1,fret=5)])
+    song=guitarpro.parse(io.BytesIO(gp5_bytes(p)),encoding='utf-8')
+    _voice_lengths_fill_bars(song)
+    assert sum(n.type!=guitarpro.NoteType.tie for b in song.tracks[0].measures[0].voices[0].beats for n in b.notes)==4
+
+def test_triplets_next_to_straight_beats_keep_bars_full():
+    # A triplet note held into a straight beat, and a straight note into a triplet beat.
+    p=fixture_project(bars=[Bar(start=0,end=4,tempo=60,beats=[0,1,2,3])],duration=4,
+      notes=[Note(id='t1',midi=64,start=0,end=.3,string=1,fret=0),Note(id='t2',midi=66,start=1/3,end=1.2,string=2,fret=7),
+             Note(id='t3',midi=67,start=2/3,end=1,string=1,fret=3),Note(id='s',midi=69,start=2.25,end=3,string=1,fret=5),
+             Note(id='t4',midi=71,start=3+1/3,end=3.6,string=1,fret=7),Note(id='t5',midi=72,start=3+2/3,end=4,string=1,fret=8)])
+    _voice_lengths_fill_bars(guitarpro.parse(io.BytesIO(gp5_bytes(p)),encoding='utf-8'))

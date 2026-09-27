@@ -13,7 +13,7 @@
 | 웹 화면 | 원본과 악보 배치, 검토·편집 UI, 재생 제어 | React, Vite, lucide-react |
 | 악보 | 프로젝트→GP 변환, 원본 시간 동기화, 편집 반영 | alphaTab, PyGuitarPro |
 | 음성 | 전처리, 청크 분할, 이벤트 필터, 작업 진행 관리 | FFmpeg, PyTorch, 공개 GAPS 체크포인트와 추론 코드 |
-| 음악 규칙 | 튜닝·카포 비용, 화음 운지 탐색, 주법 후보 | librosa, numpy, scipy의 신호 처리 기능 |
+| 음악 규칙 | 튜닝·카포 비용, 곡 전체 운지 탐색, 박자·마디선, 박 단위 양자화, 주법 후보 | librosa, numpy, scipy의 신호 처리 기능, Beat This! 비트 모델 |
 | 저장·서버 | 프로젝트 스키마, API, revision·이력, 오류 처리 | FastAPI, Pydantic, SQLite |
 
 사용자가 GP 파일을 가져오면 자동 채보 파이프라인을 거치지 않고 별도 가져오기 경로에서 `source=score`인 기존 악보로 처리하며, 자동 채보 결과와 구분한다.
@@ -57,7 +57,7 @@ npm run dev
 
 배포용 화면만 사용할 때는 `npm run build` 후 서버를 실행하거나 [TabSight.command](../TabSight.command)를 더블클릭한다. 실행 스크립트는 이미 8787 서버가 응답하면 브라우저만 연다. **이미 실행 중인 서버가 있으면 스크립트를 다시 열어도 재빌드·재시작되지 않는다.** 최신 코드를 반영하려면 기존 서버 터미널에서 Control-C로 종료한 뒤 다시 실행한다.
 
-모델은 처음 분석할 때 `.data/models/`에 다운로드된다. 추론용 API 키는 필요 없다. YouTube 영상과 모델 다운로드에는 인터넷이 필요하며, 화면의 웹폰트(Google Fonts)도 네트워크를 사용할 수 있다. 앱 전체가 항상 완전 오프라인으로 동작한다고 가정하지 않는다.
+모델은 처음 분석할 때 `.data/models/`에 다운로드된다(GAPS는 Hugging Face, Beat This!는 JKU 서버). 추론용 API 키는 필요 없다. YouTube 영상과 모델 다운로드에는 인터넷이 필요하며, 화면의 웹폰트(Google Fonts)도 네트워크를 사용할 수 있다. 앱 전체가 항상 완전 오프라인으로 동작한다고 가정하지 않는다. Beat This!를 내려받지 못하면 채보는 이전 방식의 4/4 마디로 계속된다.
 
 ## 4. 검증 명령과 전제
 
@@ -90,6 +90,21 @@ npm run test:playback
 
 브라우저 결과와 스크린샷은 `test-results/`에 저장된다. 현재의 통과 수는 [검증 기록](validation.md)을 참고한다. 테스트 통과는 전체 곡의 채보 정확도 보증과는 별개다.
 
+### 레퍼런스 악보로 채보 품질 재기
+
+[scripts/evaluate.py](../scripts/evaluate.py)는 GP 악보를 그 악보가 옮긴 YouTube 연주와 짝지어, 현재 코드가 만드는 초안을 채점한다. 악보·음원·GAPS 결과는 `.data/eval/`에 두고 저장소에는 넣지 않는다.
+
+```sh
+# 악보 폴더(폴더 이름 = 연주자)마다 연주자 채널에서 같은 곡을 찾아 음원을 받는다. 후보가 여럿이면 악보와 가장 잘 맞는 것을 고른다.
+# 읽을 수 없는 악보 파일과, 제목·음표가 같은 사본은 건너뛴다.
+.venv/bin/python scripts/evaluate.py prepare path/to/tabs/"연주자 이름" ...
+.venv/bin/python scripts/evaluate.py transcribe     # 곡마다 GAPS를 한 번 실행해 저장 (곡당 1~3분)
+.venv/bin/python scripts/evaluate.py score --out test-results/eval.json   # 현재 코드 채점 (22곡 약 2분)
+.venv/bin/python scripts/evaluate.py tune           # 운지 비용 가중치 맞추기 (--train-artist로 한 연주자만 학습)
+```
+
+`score`는 음표 F1, 줄 정확도(악보 음·GAPS 음), 비트·첫 박 F1, 박자표, 파일에 적힌 음 위치, 붙임줄 수를 출력한다. GAPS 결과를 캐시하므로 운지·박자·출력 코드를 바꾼 뒤 몇 분 안에 다시 잴 수 있다. 커밋된 이전 코드를 같은 방식으로 재려면 `git worktree`로 이전 버전을 꺼낸 뒤 이 스크립트를 복사하고, `TABSIGHT_DATA_DIR`를 이 저장소의 `.data`로 지정해 실행한다. 영상이 악보와 맞지 않으면 `.data/eval/manifest.json`에서 해당 곡에 `"exclude"`를 적는다. 다른 영상을 쓰려면 `"pinned"`에 영상 ID를 적고 `prepare --refresh`로 다시 받는다.
+
 ## 5. 문제가 생겼을 때 확인할 곳
 
 | 증상 | 먼저 확인할 내용 |
@@ -110,6 +125,6 @@ API 오류는 화면 메시지와 서버 로그에서 확인한다. 서버 로�
 
 - **오디오 모델 교체**: `transcribe_audio`의 출력인 `Note` 목록과 사용 장치를 유지한다. 원본 기준 초, 실제 MIDI, onset/offset 단위를 확인하고 교체 전후 결과를 같은 입력으로 비교한다.
 - **영상 근거 다시 추가**: 제거한 구현(자동 지판 검출·수동 보정·손 위치 비용)은 커밋 `49469bf`에 있다. 그대로 되살리기보다 손가락이 어느 줄을 누르는지 판별하는 모델을 먼저 확보한다. 영상의 프렛은 실제 너트 기준이고 프로젝트 프렛은 카포 기준이며, 개방현은 손가락 위치로 판단할 수 없다. 카포 검출을 추가하려면 채보 전 확인 화면을 채우는 `detected_settings`와 구간 변경 경로까지 연결해야 한다.
-- **운지 비용 변경**: 동일 음높이 유지, 동시 현 중복, 미정 운지 보존을 확인한다.
+- **운지 비용 변경**: 동일 음높이 유지, 동시 현 중복, 미정 운지 보존을 확인한다. `FINGERING` 가중치는 `scripts/evaluate.py tune`으로 다시 맞추고 `score`로 전후를 비교한다.
 - **주법 추가**: Python `Note.technique`, TypeScript 타입·편집 UI, 음높이 계산, GP 효과 매핑을 함께 확인한다. 후보 표시와 사용자 검토 상태도 유지한다.
-- **리듬 개선**: 원본 초 단위 시간과 출력 tick을 분리하고, 마디 경계·타이·같은 줄 재발음 테스트를 확인한다. 보기 좋은 표기와 onset 보존을 각각 평가한다.
+- **리듬 개선**: 원본 초 단위 시간과 출력 tick을 분리하고, 마디 경계·타이·같은 줄 재발음 테스트를 확인한다. `rhythm.py`의 박 시각(`bars[].beats`)은 화면의 시간 변환([types.ts](../src/types.ts)의 `barFraction`)과 같은 규칙을 써야 한다. 모든 마디·성부의 음가 합이 마디 길이와 같아야 하며(셋잇단과 일반 박 경계 포함), 보기 좋은 표기와 onset 보존을 각각 평가한다.

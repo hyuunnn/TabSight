@@ -33,6 +33,8 @@ class Bar(BaseModel):
     numerator: int = Field(default=4, ge=1, le=12)
     denominator: Literal[2, 4, 8, 16] = 4
     tempo: float = Field(default=90, ge=20, le=300)
+    # Tracked beat start times inside the bar (seconds). Empty, or edited out of shape, means equal beats.
+    beats: list[float] = Field(default_factory=list)
 
     @model_validator(mode='after')
     def order(self):
