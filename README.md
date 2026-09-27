@@ -2,7 +2,7 @@
 
 YouTube 핑거스타일 기타 연주를 **로컬 AI로 채보**하고, 초안을 고쳐 가며 연습하는 웹앱입니다.
 
-![채보 화면. 왼쪽은 원본 영상, 오른쪽은 TAB 악보이며 파란 영역이 지금 재생 중인 마디다.](docs/images/workspace.png)
+![채보 화면. 왼쪽은 원본 영상, 오른쪽은 오선보와 TAB 악보이며 파란 영역이 지금 재생 중인 마디다.](docs/images/workspace.png)
 
 ## 주요 기능
 
@@ -28,7 +28,7 @@ YouTube 핑거스타일 기타 연주를 **로컬 AI로 채보**하고, 초안�
     <td width="50%" valign="top">
       <b>튜닝·카포 확인과 보정</b><br>
       채보 전에 영상 설명에서 읽은 튜닝·카포를 확인하고, 없으면 직접 입력합니다. 나중에 바꿔도 원래 음높이를 유지한 채 운지를 다시 계산합니다.<br><br>
-      <img src="docs/images/tuning-capo.png" alt="튜닝·카포 패널. Standard 튜닝과 카포 0이 선택되어 있다.">
+      <img src="docs/images/settings-confirm.png" alt="채보 전 튜닝·카포 확인 화면. 가져온 파일이라 튜닝 정보가 없다는 안내가 있고, Standard 튜닝과 카포 0을 입력해 채보 시작 버튼이 켜져 있다.">
     </td>
   </tr>
 </table>
