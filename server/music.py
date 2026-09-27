@@ -95,7 +95,8 @@ def choose_settings(notes: list[Note], supplied_tuning=None, supplied_capo=None)
     if supplied_tuning is not None and supplied_capo is not None:
         outside=[n for n in sample if n.end-n.start>=.15 and not candidates(n.midi,supplied_tuning,supplied_capo)]
         if len(outside)>=max(5,round(len(sample)*.015)):
-            tunings=list(TUNINGS.values())
+            # Keep a custom supplied tuning in the comparison so a preset wins only by fitting better.
+            tunings=[supplied_tuning]+[t for t in TUNINGS.values() if t!=supplied_tuning]
     for tuning,capo in itertools.product(tunings, capos):
         cost = 0.
         for n in sample:
