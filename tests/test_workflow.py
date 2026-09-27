@@ -108,6 +108,15 @@ def test_metadata_tuning_and_two_capos():
     tuning,capos,line=metadata_settings('Tuning : Drop D 1 Capo - 4 Capo')
     assert tuning==[38,45,50,55,59,64] and capos==[1,4]
 
+def test_metadata_reads_note_names_nashville_and_capo_line():
+    # Sungha Jung's baritone video: strings 4 and 3 sit an octave above plain ADGCEA.
+    assert metadata_settings('Tuning : ADGCEA (Baritone Nashville Tuning)')[:2]==([33,38,55,60,52,57],[])
+    assert metadata_settings('Tuning : ADGCEA')[0]==[33,38,43,48,52,57]
+    assert metadata_settings('Tuning: D A D G A D')[0]==[38,45,50,55,57,62]
+    assert metadata_settings('Tuning: Eb Ab Db Gb Bb Eb')[0]==[39,44,49,54,58,63]
+    assert metadata_settings('Tuning: Nashville')[0]==[52,57,62,67,59,64]
+    assert metadata_settings('Tuning: Standard\nCapo on 3rd fret')[:2]==([40,45,50,55,59,64],[3])
+
 def test_rearticulation_never_resurrects_old_note(tmp_path):
     p=fixture_project(notes=[Note(id='a',midi=64,start=0,end=2,string=1,fret=0),Note(id='b',midi=67,start=.5,end=1,string=1,fret=3)])
     path=tmp_path/'rearticulation.gp5';path.write_bytes(gp5_bytes(p));notes=inspect(path)['notes']

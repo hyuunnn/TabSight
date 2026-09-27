@@ -18,16 +18,56 @@ TUNINGS = {
 HARMONICS={12:12,7:19,5:24,4:28,9:28,3:31}
 
 
+_NOTE = r'[A-G](?:#|b|♯|♭)?'
+# Six note names, written together (ADGCEA, EbAbDbGbBbEb) or separated (D A D G A D, D-A-D-G-A-D).
+_LETTER_TUNING = re.compile(rf'(?<![A-Za-z0-9#♯♭]){_NOTE}(?:[ ,/-]*{_NOTE}){{5}}(?![A-Za-z0-9#♯♭])')
+_PITCH_CLASS = {'C':0, 'D':2, 'E':4, 'F':5, 'G':7, 'A':9, 'B':11}
+
+
+def _letter_tuning(line):
+    """Read note names as open strings from 6th to 1st.
+
+    Note names carry no octave. Each string takes the octave that puts it between 8
+    semitones below and 3 above its standard pitch, because strings are often tuned far
+    down (a baritone's A1 is 7 below E2) but only a little up before they break.
+    """
+    match = _LETTER_TUNING.search(line)
+    if not match:
+        return None
+    tuning = []
+    for name, standard in zip(re.findall(_NOTE, match.group()), STANDARD):
+        pc = (_PITCH_CLASS[name[0]] + (name[1:] in ('#', '♯')) - (name[1:] in ('b', '♭'))) % 12
+        lowest = standard - 8
+        tuning.append(lowest + (pc - lowest) % 12)
+    return tuning
+
+
+def _capo_numbers(text):
+    capos = [int(v) for v in re.findall(r'(\d{1,2})\s*(?:th\s*|nd\s*|rd\s*|st\s*)?capo', text, re.I)]
+    capos += [int(v) for v in re.findall(r'capo\s*(?:on\s*)?(?:[:=]\s*)?(\d{1,2})', text, re.I)]
+    return capos
+
+
 def metadata_settings(description: str):
     line = next((s for s in description.splitlines() if re.search(r'tun(?:ing|e)\s*[:=]', s, re.I)), '')
     low = line.lower().replace('-', ' ')
-    tuning = None
-    for name in ['Half step down', 'Whole step down', 'Drop D', 'DADGAD', 'Open D', 'Open G', 'Open C', 'Standard']:
-        if name.lower() in low:
-            tuning = TUNINGS[name].copy()
-            break
-    capos = [int(v) for v in re.findall(r'(\d{1,2})\s*(?:th\s*|nd\s*|rd\s*|st\s*)?capo', line, re.I)]
-    capos += [int(v) for v in re.findall(r'capo\s*(?:on\s*)?(?:[:=]\s*)?(\d{1,2})', line, re.I)]
+    tuning = _letter_tuning(line)
+    if tuning is None:
+        for name in ['Half step down', 'Whole step down', 'Drop D', 'DADGAD', 'Open D', 'Open G', 'Open C', 'Standard']:
+            if name.lower() in low:
+                tuning = TUNINGS[name].copy()
+                break
+    if 'nashville' in low or 'high strung' in low:
+        # Nashville strings sound an octave above their note names. On a normal guitar that is
+        # strings 6-3 (E3 A3 D4 G4 B3 E4); a baritone raises only strings 4 and 3 (A1 D2 G3 C4 E3 A3).
+        tuning = tuning or STANDARD.copy()
+        baritone = 'baritone' in low or min(tuning) <= 35
+        for string in ((4, 3) if baritone else (6, 5, 4, 3)):
+            tuning[6-string] += 12
+    capos = _capo_numbers(line)
+    if not capos:
+        # A capo is often written on its own line ("Capo: 2") instead of next to the tuning.
+        capos = [v for s in description.splitlines() if s != line and 'capo' in s.lower() for v in _capo_numbers(s)]
     return tuning, sorted(set(v for v in capos if v <= 12)), line
 
 
