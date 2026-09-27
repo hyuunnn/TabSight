@@ -108,7 +108,7 @@ sequenceDiagram
 
 화면의 실행 취소/다시 실행은 브라우저 메모리에 둔 프로젝트 스냅샷으로 동작한다. 취소도 이전 스냅샷을 새 변경으로 저장한다. SQLite에 이력이 남아 있어도 **새로고침 후 실행 취소 목록을 복원하는 UI는 구현되어 있지 않다.** 저장된 최신 프로젝트는 유지된다.
 
-카포·튜닝 재계산은 기존 MIDI를 유지하며, 새 설정으로 배정할 수 없는 음이 있으면 변경 전체를 거절한다. 음표 편집기에서 프렛을 직접 바꾸는 작업은 해당 음의 MIDI도 바꾸므로 목적이 다르다.
+카포·튜닝 재계산은 기존 MIDI를 유지한다. 화면은 적용 전에 새 설정의 음역을 벗어나는 음의 수와 원인을 보여 주고, 적용하면 그 음들을 운지 미정으로 남긴다. 음표 편집기에서 프렛을 직접 바꾸는 작업은 해당 음의 MIDI도 바꾸므로 목적이 다르다.
 
 ## 6. 영상과 악보의 동기화
 
@@ -167,7 +167,7 @@ alphaTab의 재생선은 CSS transform으로 크기가 조정되므로 `width: 2
 | `DELETE /api/projects/{id}` | 프로젝트·편집 이력·`projects/<id>/` 폴더 삭제. 분석 중이면 409 |
 | `POST /api/projects/{id}/cancel` | 취소 요청 |
 | `POST /api/projects/{id}/retry` | 다시 분석 |
-| `POST /api/projects/{id}/revoice` | 튜닝·카포·구간별 카포 변경과 운지 재계산 |
+| `POST /api/projects/{id}/revoice` | 튜닝·카포·구간별 카포 변경과 운지 재계산. 배치할 수 없는 음은 `allow_unplayable`이 참이면 운지 미정으로 남기고, 아니면 원인과 함께 422 |
 | `GET /api/projects/{id}/media/{kind}` | `video`, `audio`, `poster` 제공 |
 | `GET /api/projects/{id}/score/{fmt}` | `gp5`, `gp`, `json` 생성 |
 | `POST /api/import` | multipart `file`로 악보·미디어 가져오기, 최대 1GB |

@@ -87,7 +87,25 @@ def test_api_revoice_rejects_without_mutating():
     p=fixture_project();save_project(p)
     r=client.post(f'/api/projects/{p.id}/revoice',json={'tuning':p.tuning,'capo':9})
     assert r.status_code==422
+    # The reason names the string and the note, so the player knows what to change.
+    assert '6번 줄 C♯3, 카포 9 포함' in r.json()['detail'] and '가장 낮은 음 E2' in r.json()['detail']
     assert get_project(p.id).capo==0
+
+def test_api_revoice_can_keep_unplayable_notes_for_review():
+    p=fixture_project();save_project(p)
+    r=client.post(f'/api/projects/{p.id}/revoice',json={'tuning':p.tuning,'capo':9,'allow_unplayable':True})
+    assert r.status_code==200 and r.json()['capo']==9 and r.json()['revision']==1
+    notes={n['id']:n for n in r.json()['notes']}
+    assert notes['bass']['string']==0 and notes['bass']['midi']==40  # kept at its pitch, left for review
+    q=get_project(p.id)
+    assert all(sounding_pitch(n,q)==n.midi for n in q.notes if n.string)
+
+def test_retuning_turns_a_lost_harmonic_into_a_fretted_note():
+    # E6 is the 7th-fret harmonic of standard E4; half step down has no natural harmonic at that pitch.
+    p=fixture_project(notes=[Note(id='harm',midi=83,start=0,end=.5,string=1,fret=7,technique='harmonic')],tuning=[39,44,49,54,58,63])
+    assert assign_fingering(p,strict=True)['unassigned']==0
+    n=p.notes[0]
+    assert n.technique=='normal' and 'harmonic-candidate' in n.evidence and sounding_pitch(n,p)==83
 
 def test_youtube_validation_and_job_creation(monkeypatch):
     seen=[];monkeypatch.setattr(pipeline,'submit',lambda pid:seen.append(pid))

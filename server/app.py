@@ -96,6 +96,9 @@ class Revoice(BaseModel):
     tuning:list[int]=Field(min_length=6,max_length=6)
     capo:int=Field(ge=0,le=12)
     capo_segments:list[CapoSegment]=Field(default_factory=list)
+    # The screen shows which notes a setting cannot place before the user applies it. Those
+    # notes are kept at their pitch without a string, as they are after a tricky analysis.
+    allow_unplayable:bool=False
 
 
 @app.post('/api/projects/{pid}/revoice')
@@ -104,7 +107,7 @@ def revoice(pid:str,body:Revoice):
     if p.status!='ready':raise HTTPException(409,'분석이 끝난 뒤 수정해 주세요.')
     rev=p.revision;p.tuning=body.tuning;p.capo=body.capo;p.capo_segments=body.capo_segments
     try:
-        Project.model_validate(p.model_dump());assign_fingering(p,strict=True)
+        Project.model_validate(p.model_dump());assign_fingering(p,strict=not body.allow_unplayable)
         return save_project(p,edit=True,expected_revision=rev)
     except ValueError as e:raise HTTPException(422,str(e))
 

@@ -109,6 +109,28 @@ def choose_settings(notes: list[Note], supplied_tuning=None, supplied_capo=None)
     return best[1], best[2]
 
 
+def _pitch_name(midi):
+    return ['C','C♯','D','D♯','E','F','F♯','G','G♯','A','A♯','B'][midi % 12] + str(midi//12 - 1)
+
+
+def unplayable_reason(p: Project, out_of_range, crowded):
+    """Say why notes cannot be placed, in terms a player can act on (string, octave, capo)."""
+    parts = []
+    low = [n for n in out_of_range if n.midi < min(p.tuning) + p.capo_at(n.start)]
+    high = [n for n in out_of_range if n not in low]
+    if low:
+        n = min(low, key=lambda n: n.midi)
+        string = 6 - p.tuning.index(min(p.tuning))
+        capo = p.capo_at(n.start)
+        parts.append(f'{len(low)}개는 가장 낮은 줄({string}번 줄 {_pitch_name(min(p.tuning)+capo)}{f", 카포 {capo} 포함" if capo else ""})보다 낮습니다(가장 낮은 음 {_pitch_name(n.midi)})')
+    if high:
+        n = max(high, key=lambda n: n.midi)
+        parts.append(f'{len(high)}개는 24프렛으로 낼 수 있는 음보다 높습니다(가장 높은 음 {_pitch_name(n.midi)})')
+    if crowded:
+        parts.append(f'{len(crowded)}개는 동시에 나는 음이 많아 줄이 모자랍니다')
+    return f'이 카포·튜닝에서는 {len(out_of_range)+len(crowded)}개 음을 원음대로 배치할 수 없습니다. ' + ', '.join(parts) + '.'
+
+
 def assign_fingering(p: Project, *, strict=False):
     """Beam search over simultaneous notes; a string cannot sound two pitches at once."""
     notes = sorted((n for n in p.notes if n.technique != 'percussion'), key=lambda n:(n.start,n.midi))
@@ -119,15 +141,21 @@ def assign_fingering(p: Project, *, strict=False):
         else:
             groups[-1].append(note)
     previous_position = 3.
-    unplayable = []
+    out_of_range, crowded = [], []
     for group in groups:
         # Missing notes are kept explicitly unassigned instead of changing pitch.
         states = [(0., [], set())]
         for n in group:
             capo = p.capo_at(n.start)
             opts = (harmonic_candidates if n.technique=='harmonic' else candidates)(n.midi, p.tuning, capo)
+            if not opts and n.technique == 'harmonic' and candidates(n.midi, p.tuning, capo):
+                # After a tuning change there may be no natural harmonic at this pitch. Keep the
+                # note as a fretted one and leave the harmonic as a suggestion to review.
+                n.technique = 'normal'
+                n.evidence = [e for e in n.evidence if e != 'harmonic-candidate'] + ['harmonic-candidate']
+                opts = candidates(n.midi, p.tuning, capo)
             if not opts:
-                unplayable.append(n.id)
+                out_of_range.append(n)
                 n.string, n.fret, n.confidence = 0,0,.1
                 continue
             next_states = []
@@ -146,7 +174,7 @@ def assign_fingering(p: Project, *, strict=False):
                 states = sorted(next_states,key=lambda s:s[0])[:24]
             else:
                 # More simultaneous notes than physically available strings: preserve and flag.
-                unplayable.append(n.id)
+                crowded.append(n)
                 n.string,n.fret,n.confidence = 0,0,.1
         if states:
             placements = states[0][1]
@@ -157,9 +185,9 @@ def assign_fingering(p: Project, *, strict=False):
             fs = [f for _,_,f in placements if f]
             if fs:
                 previous_position = float(np.median(fs))
-    if strict and unplayable:
-        raise ValueError(f'이 카포·튜닝에서는 {len(unplayable)}개 음을 원음대로 배치할 수 없습니다. 설정을 확인해 주세요.')
-    return {'unassigned':len(unplayable)}
+    if strict and (out_of_range or crowded):
+        raise ValueError(unplayable_reason(p, out_of_range, crowded) + ' 줄 튜닝의 옥타브와 카포를 확인해 주세요.')
+    return {'unassigned':len(out_of_range)+len(crowded)}
 
 
 def build_bars(notes, duration, tempo=90, beat_times=None, numerator=4, denominator=4):
