@@ -7,8 +7,7 @@ if sys.argv[1]=='create':
     if pid is None:sys.exit('브라우저 검사에 쓸 프로젝트가 없습니다. 앱에서 YouTube 영상을 하나 분석해 미정 운지가 없는 상태로 만든 뒤 다시 실행하거나, TABSIGHT_E2E_PROJECT에 프로젝트 ID를 지정해 주세요.')
     p=get_project(pid);source=project_dir(pid);p.id=uuid.uuid4().hex;p.title='브라우저 검증용 복제';p.revision=0;p.source='file';p.metadata['browser_test']=True
     target=project_dir(p.id)
-    # vision-result.json lets the copy restore the automatic fretboard result.
-    for name in ['source.mp4','audio.wav','poster.jpg','vision-result.json']:
+    for name in ['source.mp4','audio.wav','poster.jpg']:
         if (source/name).exists():os.link(source/name,target/name)
     save_project(p);print(p.id)
 elif sys.argv[1]=='delete':

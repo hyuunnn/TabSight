@@ -69,7 +69,6 @@ class Project(BaseModel):
     bars: list[Bar] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     metadata: dict = Field(default_factory=dict)
-    vision: dict = Field(default_factory=dict)
     metrics: dict = Field(default_factory=dict)
 
     @model_validator(mode='after')

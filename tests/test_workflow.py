@@ -13,7 +13,6 @@ from server.models import Project,Note,Bar,CapoSegment
 from server.music import assign_fingering,sounding_pitch,metadata_settings,choose_settings,candidates
 from server.export import gp5_bytes
 from server.store import ROOT,connection,get_project,project_dir,save_project
-from server.vision import finger_positions
 
 client=TestClient(app)
 
@@ -128,31 +127,9 @@ def test_cancel_before_start_does_not_download():
 
 def test_repeated_out_of_range_notes_challenge_description():
     notes=[Note(id=str(i),midi=pitch,start=i,end=i+.5) for i,pitch in enumerate([44,49,54,59,63,68]*12)]
-    tuning,capo=choose_settings(notes,{},[40,45,50,55,59,64],5)
+    tuning,capo=choose_settings(notes,[40,45,50,55,59,64],5)
     assert capo==5 and tuning!=[40,45,50,55,59,64]
     assert all(candidates(n.midi,tuning,capo) for n in notes)
-
-def test_calibration_revoices_from_real_hand_positions():
-    p=fixture_project();p.vision={'aspect':16/9,'frames':[{'time':0,'hands':[[[.48,.5,0]]*21],'positions':[]}]};save_project(p)
-    r=client.post(f'/api/projects/{p.id}/calibration',json={'nut':[.7,.5],'fret12':[.4,.5],'width':.035})
-    assert r.status_code==200
-    assert r.json()['vision']['frames'][0]['positions']
-    assert [n['midi'] for n in r.json()['notes']]==[40,64,67]
-
-
-AUTO_BOARD={'nut':[.8,.5],'fret12':[.5,.5],'width':.04,'source':'automatic','confidence':.35}
-MANUAL_BOARD={'nut':[.7,.5],'fret12':[.4,.5],'width':.035}
-
-# At this hand position no video, the automatic board and the manual board each lead to a
-# different fingering, so a test can tell which one the notes were computed from.
-HAND=[[[.54,.506,0]]*21]
-
-def board_frames(board,times=(0,)):
-    return [{'time':t,'hands':HAND,'board':board,'positions':finger_positions(HAND,board,16/9)} for t in times]
-
-def fingering(p):
-    notes=p['notes'] if isinstance(p,dict) else [n.model_dump() for n in p.notes]
-    return {n['id']:(n['string'],n['fret']) for n in notes}
 
 def history_rows(pid):
     with connection() as c:return c.execute('SELECT count(*) FROM history WHERE project_id=?',(pid,)).fetchone()[0]
@@ -175,39 +152,3 @@ def test_delete_refuses_running_analysis(status):
     r=client.delete(f'/api/projects/{p.id}')
     assert r.status_code==409 and '분석을 취소한 뒤' in r.json()['detail']
     assert get_project(p.id).status==status and media.exists()
-
-def test_calibration_reset_restores_automatic_result():
-    p=fixture_project(vision={'aspect':16/9,'frames':board_frames(AUTO_BOARD,[0,.5]),'calibration':None})
-    assign_fingering(p);save_project(p)  # as the analysis leaves it: fingered with the automatic board
-    automatic=json.loads(json.dumps(p.vision));(project_dir(p.id)/'vision-result.json').write_text(json.dumps(automatic))
-    before=fingering(p)
-    assert client.post(f'/api/projects/{p.id}/calibration/reset').status_code==409  # nothing manual to reset yet
-    r=client.post(f'/api/projects/{p.id}/calibration',json=MANUAL_BOARD);assert r.status_code==200;manual=r.json()
-    assert all(f['board']['source']=='manual' for f in manual['vision']['frames'])
-    assert fingering(manual)!=before  # the manual board moved notes, so the reset has something to undo
-    rows=history_rows(p.id)
-    r=client.post(f'/api/projects/{p.id}/calibration/reset');restored=r.json()
-    assert r.status_code==200 and restored['vision']==automatic and get_project(p.id).vision==automatic
-    assert fingering(restored)==before and fingering(get_project(p.id))==before  # fingered from the automatic board again
-    assert restored['revision']==manual['revision']+1 and history_rows(p.id)==rows+1  # undoable like other edits
-    assert [n['midi'] for n in restored['notes']]==[40,64,67]
-
-def test_calibration_reset_refuses_running_analysis():
-    p=fixture_project(vision={'aspect':16/9,'frames':board_frames(AUTO_BOARD)});save_project(p)
-    (project_dir(p.id)/'vision-result.json').write_text(json.dumps(p.vision))
-    assert client.post(f'/api/projects/{p.id}/calibration',json=MANUAL_BOARD).status_code==200
-    q=get_project(p.id);q.status='processing';save_project(q)  # e.g. the user started a re-analysis
-    r=client.post(f'/api/projects/{p.id}/calibration/reset')
-    assert r.status_code==409 and '분석이 끝난 뒤' in r.json()['detail']
-    assert get_project(p.id).vision['calibration']['source']=='manual'
-
-def test_calibration_reset_needs_the_automatic_result():
-    p=fixture_project(vision={'aspect':16/9,'frames':board_frames(AUTO_BOARD)});save_project(p)
-    r=client.post(f'/api/projects/{p.id}/calibration',json=MANUAL_BOARD);assert r.status_code==200;manual=r.json()
-    r=client.post(f'/api/projects/{p.id}/calibration/reset')
-    assert r.status_code==409 and '파일이 없어' in r.json()['detail']
-    kept=get_project(p.id);assert kept.revision==manual['revision'] and kept.vision['calibration']['source']=='manual'
-    q=fixture_project();save_project(q)  # e.g. an audio file: there are no frames to restore
-    assert client.post(f'/api/projects/{q.id}/calibration',json=MANUAL_BOARD).status_code==200
-    r=client.post(f'/api/projects/{q.id}/calibration/reset')
-    assert r.status_code==200 and 'calibration' not in r.json()['vision']

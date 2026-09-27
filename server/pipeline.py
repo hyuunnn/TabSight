@@ -6,7 +6,6 @@ import re
 import shutil
 import subprocess
 import threading
-import sys
 import time
 import traceback
 import uuid
@@ -18,7 +17,7 @@ import numpy as np
 
 from .models import Note,Project
 from .music import assign_fingering,build_bars,choose_settings,metadata_settings,suggest_techniques
-from .store import DATA,ROOT,get_project,project_dir,save_project
+from .store import DATA,get_project,project_dir,save_project
 
 EXECUTOR=ThreadPoolExecutor(max_workers=1,thread_name_prefix='tabsight')
 CANCEL:dict[str,threading.Event]={}
@@ -101,26 +100,6 @@ def transcribe_audio(y,sr,progress,cancelled):
     return events,device
 
 
-def video_analysis(folder,progress,event):
-    progress_file=folder/'vision-progress';progress_file.unlink(missing_ok=True)
-    output=folder/'vision-result.json';output.unlink(missing_ok=True)
-    with (folder/'vision.log').open('w') as log:
-        proc=subprocess.Popen([sys.executable,'-m','server.vision_worker',str(folder)],cwd=ROOT,stdout=log,stderr=log)
-        started=time.monotonic();last=-1
-        try:
-            while proc.poll() is None:
-                if event.is_set():raise InterruptedError('분석을 취소했습니다.')
-                if time.monotonic()-started>1800:raise TimeoutError('영상 분석 제한 시간을 초과했습니다.')
-                try:value=float(progress_file.read_text())
-                except (ValueError,FileNotFoundError):value=0
-                if value!=last:progress(value);last=value
-                time.sleep(.25)
-            if proc.returncode:raise RuntimeError(f'손 인식 프로세스 종료 ({proc.returncode}). vision.log를 확인해 주세요.')
-        finally:
-            if proc.poll() is None:proc.terminate();proc.wait(timeout=10)
-    return json.loads(output.read_text())
-
-
 def run(pid):
     started=time.monotonic();folder=project_dir(pid)
     event=CANCEL.setdefault(pid,threading.Event())
@@ -158,9 +137,10 @@ def run(pid):
         duration=len(y)/sr
         if duration<1:raise ValueError('분석할 연주 구간이 너무 짧습니다.')
         update('기타 음표를 듣는 중 · 첫 실행은 모델을 준비합니다',.18)
-        notes,device=transcribe_audio(y,sr,lambda f:update('기타 음표를 듣는 중',.18+.38*f),event.is_set)
+        # Transcription takes most of the analysis time, so it gets most of the progress bar.
+        notes,device=transcribe_audio(y,sr,lambda f:update('기타 음표를 듣는 중',.18+.67*f),event.is_set)
         if not notes:raise ValueError('기타 음표를 찾지 못했습니다. 연주가 잘 들리는 영상을 사용해 주세요.')
-        update('박자와 마디를 정리하는 중',.58)
+        update('박자와 마디를 정리하는 중',.86)
         env=librosa.onset.onset_strength(y=y,sr=sr,hop_length=256)
         tempo,beats=librosa.beat.beat_track(onset_envelope=env,sr=sr,hop_length=256,trim=False)
         tempo=float(np.clip(np.asarray(tempo).reshape(-1)[0],30,240))
@@ -168,7 +148,7 @@ def run(pid):
         p=get_project(pid);p.notes=notes;p.duration=duration;p.tempo=tempo
         p.bars=build_bars(notes,duration,tempo,beat_times)
         tuning,capos,line=metadata_settings(p.metadata.get('description',''))
-        p.tuning,p.capo=choose_settings(notes,{},tuning,capos[0] if capos else None)
+        p.tuning,p.capo=choose_settings(notes,tuning,capos[0] if capos else None)
         p.metadata['settings_source']='description' if line else 'audio-inference'
         p.metadata['tuning_source']='description' if tuning else 'audio-inference'
         p.metadata['capo_source']='description' if capos else 'audio-inference'
@@ -182,28 +162,13 @@ def run(pid):
         elif not capos:p.warnings.append('튜닝은 영상 설명을 참고했고, 카포는 음역과 가능한 운지로 추정했습니다.')
         if settings_conflict:p.warnings.append('영상 설명의 튜닝으로 연주할 수 없는 저음이 반복되어 다른 튜닝을 제안했습니다. 원음과 비교해 설정을 확인해 주세요.')
         if len(capos)>1:p.warnings.append(f'설명에 카포 {", ".join(map(str,capos))}프렛이 있습니다. 구간별 카포 변경을 확인해 주세요.')
-        assign_fingering(p,use_vision=False)
-        audio_only=[n.model_dump() for n in p.notes]
-        (folder/'audio-only.json').write_text(json.dumps(audio_only,ensure_ascii=False))
-        save_project(p)
-        if media.exists():
-            update('손 움직임과 지판을 살펴보는 중',.63)
-            try:
-                p.vision=video_analysis(folder,lambda f:update('손 움직임과 지판을 살펴보는 중',.63+.24*f),event)
-            except InterruptedError:raise
-            except Exception as exc:
-                p.warnings.append(f'영상 분석을 완료하지 못해 음성 초안을 표시합니다: {type(exc).__name__}')
-                p.vision={'error':str(exc),'frames':[]}
         update('운지와 연주 기법을 정리하는 중',.9)
-        stats=assign_fingering(p,use_vision=True)
-        changed=sum((a['string'],a['fret'])!=(b.string,b.fret) for a,b in zip(audio_only,p.notes))
+        stats=assign_fingering(p)
         suggest_techniques(p,y,sr)
         p.warnings.append('특수 주법 자동 표기는 실험적입니다. 원본 연주와 비교해 수정해 주세요.')
         p.warnings.append('파일의 리듬은 64분음표 단위까지 표현합니다. 같은 줄의 잔향은 다음 음이 시작할 때 끝나도록 정리합니다.')
-        p.metrics={'audio_model':'GAPS paper checkpoint (2024)','device':device,**stats,'changed_by_vision':changed,
-                   'hand_detection_rate':p.vision.get('hand_detection_rate',0),'board_detection_rate':p.vision.get('board_detection_rate',0),
+        p.metrics={'audio_model':'GAPS paper checkpoint (2024)','device':device,**stats,
                    'accuracy_verified':False,'note_count':len(p.notes)}
-        if not stats['vision_assisted_notes']:p.warnings.append('줄·프렛에 사용할 지판 위치를 충분히 읽지 못했습니다. 지판 보정 후 다시 운지를 계산할 수 있습니다.')
         if stats['unassigned']:p.warnings.append(f'{stats["unassigned"]}개 음의 운지가 미정입니다. 내보내기 전에 수정해 주세요.')
         if event.is_set():raise InterruptedError('분석을 취소했습니다.')
         p.analysis_seconds=round(time.monotonic()-started,2);p.status='ready';p.stage='채보 초안 준비 완료';p.progress=1

@@ -109,39 +109,6 @@ def revoice(pid:str,body:Revoice):
     except ValueError as e:raise HTTPException(422,str(e))
 
 
-class Calibration(BaseModel):
-    nut:list[float]=Field(min_length=2,max_length=2)
-    fret12:list[float]=Field(min_length=2,max_length=2)
-    width:float=Field(gt=.005,lt=.3)
-
-
-@app.post('/api/projects/{pid}/calibration')
-def calibration(pid:str,body:Calibration):
-    from .vision import finger_positions
-    p=project(pid)
-    if p.status!='ready':raise HTTPException(409,'분석이 끝난 뒤 수정해 주세요.')
-    board={**body.model_dump(),'source':'manual','confidence':.8}
-    p.vision['calibration']=board
-    for frame in p.vision.get('frames',[]):
-        frame['board']=board;frame['positions']=finger_positions(frame['hands'],board,p.vision.get('aspect',16/9))
-    assign_fingering(p,strict=False)
-    return save_project(p,edit=True,expected_revision=p.revision)
-
-
-@app.post('/api/projects/{pid}/calibration/reset')
-def reset_calibration(pid:str):
-    p=project(pid)
-    if p.status!='ready':raise HTTPException(409,'분석이 끝난 뒤 수정해 주세요.')
-    if (p.vision.get('calibration') or {}).get('source')!='manual':raise HTTPException(409,'되돌릴 수동 지판 보정이 없습니다.')
-    # Manual calibration overwrites every frame in the project; the worker's file keeps the automatic result.
-    original=project_dir(pid)/'vision-result.json'
-    if original.exists():p.vision=json.loads(original.read_text())
-    elif p.vision.get('frames'):raise HTTPException(409,'처음 지판 인식 결과 파일이 없어 자동 인식으로 되돌릴 수 없습니다.')
-    else:p.vision.pop('calibration',None)
-    assign_fingering(p,strict=False)
-    return save_project(p,edit=True,expected_revision=p.revision)
-
-
 @app.get('/api/projects/{pid}/media/{kind}')
 def media(pid:str,kind:str):
     project(pid);folder=project_dir(pid)

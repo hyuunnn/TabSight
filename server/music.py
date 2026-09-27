@@ -44,7 +44,7 @@ def sounding_pitch(n,p):
     return p.tuning[6-n.string]+p.capo_at(n.start)+interval
 
 
-def choose_settings(notes: list[Note], vision: dict, supplied_tuning=None, supplied_capo=None):
+def choose_settings(notes: list[Note], supplied_tuning=None, supplied_capo=None):
     """Compare physical feasibility, rather than treating a key estimate as a tuning."""
     tunings = [supplied_tuning] if supplied_tuning is not None else list(TUNINGS.values())
     capos = [supplied_capo] if supplied_capo is not None else list(range(8))
@@ -69,20 +69,8 @@ def choose_settings(notes: list[Note], vision: dict, supplied_tuning=None, suppl
     return best[1], best[2]
 
 
-def _vision_positions(vision, t):
-    frames = vision.get('frames', [])
-    if not frames:
-        return []
-    times = np.asarray([f['time'] for f in frames])
-    i = int(np.argmin(np.abs(times-t)))
-    return frames[i].get('positions', []) if abs(times[i]-t) < .55 else []
-
-
-def assign_fingering(p: Project, *, use_vision=True, strict=False):
-    """Beam search over simultaneous notes; a string cannot sound two pitches at once.
-
-    Vision observations are soft evidence. Never turn missing observations into certainty.
-    """
+def assign_fingering(p: Project, *, strict=False):
+    """Beam search over simultaneous notes; a string cannot sound two pitches at once."""
     notes = sorted((n for n in p.notes if n.technique != 'percussion'), key=lambda n:(n.start,n.midi))
     groups = []
     for note in notes:
@@ -92,7 +80,6 @@ def assign_fingering(p: Project, *, use_vision=True, strict=False):
             groups[-1].append(note)
     previous_position = 3.
     unplayable = []
-    vision_used = 0
     for group in groups:
         # Missing notes are kept explicitly unassigned instead of changing pitch.
         states = [(0., [], set())]
@@ -103,7 +90,6 @@ def assign_fingering(p: Project, *, use_vision=True, strict=False):
                 unplayable.append(n.id)
                 n.string, n.fret, n.confidence = 0,0,.1
                 continue
-            observed = _vision_positions(p.vision, n.start) if use_vision else []
             next_states = []
             for cost, placements, used in states:
                 for string,fret in opts:
@@ -112,13 +98,10 @@ def assign_fingering(p: Project, *, use_vision=True, strict=False):
                     local = .06*fret + .12*abs(max(1,fret)-previous_position)
                     if fret == 0:
                         local -= .25
-                    if observed:
-                        distance = min(abs(o['fret']-(fret+capo))*.35 + abs(o['string']-string)*.7 for o in observed)
-                        local += min(2.,distance)*.8
-                    frets = [f for _,_,f,_ in placements if f > 0] + ([fret] if fret > 0 else [])
+                    frets = [f for _,_,f in placements if f > 0] + ([fret] if fret > 0 else [])
                     if frets and max(frets)-min(frets) > 5:
                         local += (max(frets)-min(frets)-5)*1.4
-                    next_states.append((cost+local,placements+[(n,string,fret,bool(observed))],used|{string}))
+                    next_states.append((cost+local,placements+[(n,string,fret)],used|{string}))
             if next_states:
                 states = sorted(next_states,key=lambda s:s[0])[:24]
             else:
@@ -127,20 +110,16 @@ def assign_fingering(p: Project, *, use_vision=True, strict=False):
                 n.string,n.fret,n.confidence = 0,0,.1
         if states:
             placements = states[0][1]
-            for n,string,fret,observed in placements:
+            for n,string,fret in placements:
                 n.string,n.fret = string,int(fret)
-                n.evidence = [e for e in n.evidence if e != 'vision']
-                if observed:
-                    n.evidence.append('vision')
-                    vision_used += 1
                 # This is a review priority, not a calibrated correctness probability.
-                n.confidence = min(n.confidence, .72 if observed else .58)
-            fs = [f for _,_,f,_ in placements if f]
+                n.confidence = min(n.confidence, .58)
+            fs = [f for _,_,f in placements if f]
             if fs:
                 previous_position = float(np.median(fs))
     if strict and unplayable:
         raise ValueError(f'이 카포·튜닝에서는 {len(unplayable)}개 음을 원음대로 배치할 수 없습니다. 설정을 확인해 주세요.')
-    return {'unassigned':len(unplayable), 'vision_assisted_notes':vision_used}
+    return {'unassigned':len(unplayable)}
 
 
 def build_bars(notes, duration, tempo=90, beat_times=None, numerator=4, denominator=4):

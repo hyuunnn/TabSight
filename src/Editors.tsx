@@ -11,7 +11,7 @@ export function NoteEditor({note,project,disabled,onSave,onDelete}:{note:Note;pr
  <label>시작 (초)<input aria-label="음표 시작" type="number" step="any" min={0} value={draft.start} onChange={e=>change('start',+e.target.value)}/></label>
  <label>끝 (초)<input aria-label="음표 끝" type="number" step="any" min={draft.start+.01} value={draft.end} onChange={e=>change('end',+e.target.value)}/></label>
  <label className="wide">연주 기법<select aria-label="연주 기법" value={draft.technique} onChange={e=>change('technique',e.target.value)}>{Object.entries(techniques).map(([v,l])=><option key={v} value={v}>{l}</option>)}</select></label>
- </div><div className="note-evidence">{!draft.reviewed&&draft.evidence.includes('harmonic-candidate')&&<p>하모닉스일 가능성이 있습니다. 터치 프렛과 줄을 확인해 주세요.</p>}{draft.evidence.includes('vision')?'손 위치를 운지 후보에 반영':'음성과 연주 가능한 운지를 바탕으로 추정'}{draft.evidence.includes('imported-score')&&' · 기존 악보'}</div><button className="primary small full" disabled={disabled||draft.end<=draft.start}><Check size={16}/>수정 저장 · 검토 완료</button></form>;
+ </div><div className="note-evidence">{!draft.reviewed&&draft.evidence.includes('harmonic-candidate')&&<p>하모닉스일 가능성이 있습니다. 터치 프렛과 줄을 확인해 주세요.</p>}음성과 연주 가능한 운지를 바탕으로 추정{draft.evidence.includes('imported-score')&&' · 기존 악보'}</div><button className="primary small full" disabled={disabled||draft.end<=draft.start}><Check size={16}/>수정 저장 · 검토 완료</button></form>;
 }
 
 export function SettingsEditor({project,tunings,disabled,time,onApply}:{project:Project;tunings:Record<string,number[]>;disabled:boolean;time:number;onApply:(v:any)=>void}){
