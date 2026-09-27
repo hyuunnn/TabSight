@@ -7,14 +7,18 @@ const base=process.env.TABSIGHT_URL||'http://127.0.0.1:8787';
 const python='.venv/bin/python';const fixtureArgs=['-m','scripts.browser_fixture','create'];if(process.env.TABSIGHT_E2E_PROJECT)fixtureArgs.push(process.env.TABSIGHT_E2E_PROJECT);
 let id;try{id=execFileSync(python,fixtureArgs,{encoding:'utf8'}).trim();}catch(e){if(e.status==null)console.error(e.message);process.exit(e.status||1);}
 fs.mkdirSync('test-results',{recursive:true});const errors=[];const results=[];
+const newSong='test-results/new-song.mp4';let imported=null;
 const browser=await chromium.launch({executablePath:process.env.CHROME_PATH||'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',headless:true});
 const page=await browser.newPage({viewport:{width:1440,height:1000},acceptDownloads:true});page.setDefaultTimeout(12000);page.on('pageerror',e=>errors.push(e.message));
 const report=name=>{results.push(name);console.log('PASS',name);};
 const project=async()=>{const r=await fetch(`${base}/api/projects/${id}`);return r.json();};
+// A song imported by the test is removed even when a check fails midway; a running transcription is cancelled first.
+const discard=async pid=>{await fetch(`${base}/api/projects/${pid}/cancel`,{method:'POST'}).catch(()=>{});for(let i=0;i<60;i++){const r=await fetch(`${base}/api/projects/${pid}`,{method:'DELETE'}).catch(()=>null);if(!r||r.status!==409)return;await new Promise(done=>setTimeout(done,1000));}};
 const write=async(action)=>{const done=page.waitForResponse(r=>r.url().includes(`/api/projects/${id}`)&&['PUT','POST'].includes(r.request().method()));await action();const r=await done;assert.equal(r.status(),200,await r.text());await page.getByText('로컬 저장됨',{exact:true}).waitFor();};
 const waitScore=async()=>{await page.locator('.alpha-host svg').first().waitFor({state:'visible'});await page.waitForTimeout(250);};
 const setTime=async value=>{await page.getByLabel('재생 위치',{exact:true}).evaluate((el,value)=>{Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(el,String(value));el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));},value);await page.waitForTimeout(200);};
 try{
+ execFileSync(python,['-m','scripts.browser_fixture','clip',id,newSong]);
  await page.goto(base);await page.getByRole('heading',{name:'좋아하는 연주를, 나의 악보로.'}).waitFor();await page.screenshot({path:'test-results/home.png',fullPage:true});report('홈 화면');
  await page.locator('.project-item').filter({hasText:'브라우저 검증용 복제'}).click();await waitScore();await page.waitForTimeout(2000);const original=await project();report('실제 AI 결과로 악보 렌더링');
  const scoreNote=page.locator('.alpha-host svg text[fill="#B1701D"]').first();await scoreNote.scrollIntoViewIfNeeded();const notePoint=await scoreNote.evaluate(el=>{const pt=el.ownerSVGElement.createSVGPoint();pt.x=+el.getAttribute('x')+3;pt.y=+el.getAttribute('y')-4;const screen=pt.matrixTransform(el.getScreenCTM());return {x:screen.x,y:screen.y};});await page.mouse.click(notePoint.x,notePoint.y);await page.getByLabel('음표 시작',{exact:true}).waitFor();const clickedTime=+(await page.getByLabel('음표 시작',{exact:true}).inputValue());assert(Math.abs((await page.locator('video').evaluate(v=>v.currentTime))-clickedTime)<.15);report('악보 음표 클릭으로 영상 탐색');
@@ -31,6 +35,13 @@ try{
  await page.locator('.download-menu summary').click();await page.screenshot({path:'test-results/workspace.png',fullPage:true});await page.setViewportSize({width:390,height:844});await page.waitForTimeout(500);assert(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1));await page.screenshot({path:'test-results/mobile.png',fullPage:true});report('모바일 레이아웃');
  // Deleting through the sidebar also disposes of the copy; the fixture only cleans up after failures.
  await page.setViewportSize({width:1440,height:1000});const row=page.locator('.project-row').filter({hasText:'브라우저 검증용 복제'});await row.hover();page.once('dialog',dialog=>dialog.accept());await row.getByRole('button',{name:'브라우저 검증용 복제 채보 삭제',exact:true}).click();await row.waitFor({state:'detached'});await page.getByRole('heading',{name:'좋아하는 연주를, 나의 악보로.'}).waitFor();assert.equal((await fetch(`${base}/api/projects/${id}`)).status,404);report('연습실 목록에서 채보 삭제');
+ // A new song stops for the player's tuning and capo, then transcribes with exactly those (a real GAPS run on a 12 s clip).
+ await page.locator('input[type=file]').setInputFiles(newSong);await page.getByRole('heading',{name:'튜닝과 카포를 확인해 주세요'}).waitFor({timeout:60000});imported=await page.evaluate(()=>localStorage.getItem('tabsight-project'));
+ const startButton=page.getByRole('button',{name:'이 설정으로 채보 시작',exact:true});assert(await startButton.isDisabled(),'transcription must wait for tuning and capo');assert.equal((await (await fetch(`${base}/api/projects/${imported}`)).json()).status,'awaiting_settings');
+ await page.getByRole('button',{name:'재생',exact:true}).click();await page.waitForTimeout(1100);assert(await page.locator('video').evaluate(v=>!v.paused&&v.currentTime>.3),'the original plays while waiting');await page.getByRole('button',{name:'일시정지',exact:true}).click();
+ await page.getByLabel('튜닝 프리셋').selectOption('Standard');await page.getByLabel('기본 카포').fill('0');assert(!(await startButton.isDisabled()));await startButton.click();
+ await page.locator('.alpha-host svg').first().waitFor({state:'visible',timeout:180000});const transcribed=await (await fetch(`${base}/api/projects/${imported}`)).json();assert.equal(transcribed.status,'ready');assert.deepEqual([transcribed.tuning,transcribed.capo],[[40,45,50,55,59,64],0]);assert(transcribed.metadata.settings_confirmed&&transcribed.notes.length>0);
+ assert.equal((await fetch(`${base}/api/projects/${imported}`,{method:'DELETE'})).status,200);imported=null;report('새 곡의 채보 전 튜닝·카포 확인');
  assert.deepEqual(errors,[]);report('브라우저 예외 없음');
  fs.writeFileSync('test-results/browser-report.json',JSON.stringify({passed:results,errors},null,2));
-}catch(e){await page.screenshot({path:'test-results/failure.png',fullPage:true});console.error(await page.getByRole('alert').allTextContents());throw e;}finally{await browser.close();execFileSync(python,['-m','scripts.browser_fixture','delete',id]);}
+}catch(e){await page.screenshot({path:'test-results/failure.png',fullPage:true});console.error(await page.getByRole('alert').allTextContents());throw e;}finally{await browser.close();if(imported)await discard(imported);execFileSync(python,['-m','scripts.browser_fixture','delete',id]);}

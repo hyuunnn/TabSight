@@ -1,5 +1,5 @@
 """Owns disposable browser-test projects; never edits the source project."""
-import sys,uuid,os
+import sys,uuid,os,subprocess
 from server.store import delete_project,get_project,save_project,project_dir,list_projects
 
 if sys.argv[1]=='create':
@@ -10,6 +10,9 @@ if sys.argv[1]=='create':
     for name in ['source.mp4','audio.wav','poster.jpg']:
         if (source/name).exists():os.link(source/name,target/name)
     save_project(p);print(p.id)
+elif sys.argv[1]=='clip':
+    # A short excerpt of the copy's video, which test:e2e imports as a new song to check the settings step.
+    subprocess.run(['ffmpeg','-nostdin','-hide_banner','-loglevel','error','-y','-ss','20','-t','12','-i',str(project_dir(sys.argv[2])/'source.mp4'),'-c','copy',sys.argv[3]],check=True,timeout=60)
 elif sys.argv[1]=='delete':
     try:p=get_project(sys.argv[2])
     except KeyError:sys.exit(0)  # test:e2e already deleted its copy through the sidebar.
