@@ -50,3 +50,12 @@
 .settings-confirm>.tiny{margin-top:10px}
 .settings-confirm .primary{margin-top:16px}
 @media(max-width:720px){.settings-confirm{padding:28px 16px 24px}}
+
+.score-file-option{position:relative;margin-top:28px;padding-top:22px;border-top:1px solid #ecf0e6}
+.score-file-option .or-divider{position:absolute;top:-8px;left:50%;transform:translateX(-50%);background:#fffffd;padding:0 10px;font-size:9px;color:#9aa98f;letter-spacing:.5px}
+.score-file-option h3{font-size:12px;margin-bottom:6px}
+.score-file-option p{font-size:10px;line-height:1.8;color:#7a8b72;margin-bottom:12px;word-break:keep-all}
+.score-file-facts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 12px;margin:14px 0 12px}
+.score-file-facts dt{font-size:8px;color:#8b9b82;margin-bottom:3px}
+.score-file-facts dd{margin:0;font-size:10px;color:#3f5640;word-break:break-word}
+.score-file-info .secondary{margin-top:12px}

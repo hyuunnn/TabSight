@@ -39,10 +39,17 @@ def video_id(url):
     return vid
 
 
-def submit(pid,transcribe=False):
-    """Queue media preparation, or transcription once the player has confirmed tuning and capo."""
+def submit(pid,transcribe=False,sync=False):
+    """Queue media preparation, transcription once the player has confirmed tuning and capo, or
+    the timing of the player's own score. That needs no model, so it runs on the preparation
+    queue instead of waiting behind another song's transcription."""
     CANCEL[pid]=threading.Event()
-    (EXECUTOR if transcribe else PREPARE).submit(run,pid,transcribe)
+    (EXECUTOR if transcribe else PREPARE).submit(run,pid,transcribe,sync)
+
+
+def remove_score(folder):
+    """Drop an uploaded score and its timeline."""
+    for path in folder.glob('score.*'):path.unlink(missing_ok=True)
 
 
 def cancel(pid):
@@ -147,6 +154,8 @@ def _prepare(pid,folder,update,event):
         # named tuning the screen asks the player, so the tuning stored here is a placeholder.
         p.tuning=tuning or STANDARD.copy();p.capo=capos[0] if capos else 0;p.capo_segments=[]
     p.metadata['prepare_seconds']=round(time.monotonic()-started,2)
+    # Back at the check, a score uploaded before is dropped along with its timing.
+    p.sync=[];p.metadata.pop('score_file',None);remove_score(folder)
     p.duration=duration;p.status='awaiting_settings';p.stage='튜닝·카포를 확인해 주세요';p.progress=.15
     save_project(p)
 
@@ -201,13 +210,48 @@ def _transcribe(pid,folder,update,event):
     (folder/'analysis-report.json').write_text(json.dumps({'seconds':p.analysis_seconds,**p.metrics},ensure_ascii=False,indent=2))
 
 
-def run(pid,transcribe=False):
+def _sync(pid,folder,update,event):
+    """Time the player's own score to the recording instead of transcribing it."""
+    started=time.monotonic()
+    update('악보를 영상에 맞추는 중',.3)
+    p=get_project(pid);timeline_file=folder/'score.timeline.json'
+    if not p.metadata.get('score_file') or not timeline_file.exists():raise ValueError('올린 악보가 없습니다. 다시 분석한 뒤 악보를 올려 주세요.')
+    timeline=json.loads(timeline_file.read_text(encoding='utf-8'))
+    audio=folder/'audio.wav'
+    if not audio.exists() and (folder/'source.mp4').exists():_extract_audio(folder)
+    if not audio.exists():raise ValueError('준비된 음성이 없습니다. 다시 분석해 주세요.')
+    import soundfile as sf
+    from .sync import align
+    y,sr=sf.read(audio,dtype='float32')
+    if y.ndim>1:y=y.mean(axis=1)
+    found=align(timeline,y,sr)
+    if event.is_set():raise InterruptedError('분석을 취소했습니다.')
+    p=get_project(pid)
+    # The score file stays the reference: nothing of an earlier transcription is mixed in.
+    p.sync=[(int(tick),float(at)) for tick,at in found.pop('anchors')];p.notes=[];p.bars=[];p.capo_segments=[]
+    p.tempo=float(np.clip(timeline.get('tempo') or p.tempo,20,300));p.duration=len(y)/sr
+    p.warnings=['올린 악보를 영상 소리에 자동으로 맞췄습니다. 어긋나는 구간이 있으면 영상과 비교해 확인해 주세요.']
+    if not found['reliable']:
+        p.warnings.append('악보와 영상 소리가 잘 맞지 않습니다. 같은 곡, 같은 편곡의 악보인지 확인해 주세요. 커서가 영상과 크게 어긋날 수 있어요.')
+    elif found['shift']:
+        p.warnings.append(f"영상 소리가 악보보다 {abs(found['shift'])}반음 {'높게' if found['shift']>0 else '낮게'} 들립니다. 영상의 카포나 튜닝이 악보와 다를 수 있어요.")
+    if timeline['track_count']>1:
+        p.warnings.append(f"여러 트랙 중 '{timeline['track_name'] or '첫 기타'}' 트랙을 영상에 맞춰 표시합니다.")
+    p.warnings.append('악보음은 파일에 적힌 템포로 연주하고, 영상이 그 위치를 따라갑니다.')
+    p.metrics={'sync':found,'accuracy_verified':False}
+    p.analysis_seconds=round(p.metadata.get('prepare_seconds',0)+time.monotonic()-started,2)
+    p.status='ready';p.stage='악보 싱크 완료';p.progress=1
+    save_project(p)
+    (folder/'analysis-report.json').write_text(json.dumps({'seconds':p.analysis_seconds,'sync':found},ensure_ascii=False,indent=2))
+
+
+def run(pid,transcribe=False,sync=False):
     folder=project_dir(pid)
     event=CANCEL.setdefault(pid,threading.Event())
     def update(stage,progress):
         if event.is_set():raise InterruptedError('분석을 취소했습니다.')
         p=get_project(pid);p.status='processing';p.stage=stage;p.progress=float(progress);save_project(p)
-    try:(_transcribe if transcribe else _prepare)(pid,folder,update,event)
+    try:(_transcribe if transcribe else _sync if sync else _prepare)(pid,folder,update,event)
     except InterruptedError:
         p=get_project(pid);p.status='cancelled';p.stage='분석 취소';save_project(p)
     except Exception as exc:

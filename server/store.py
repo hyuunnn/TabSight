@@ -62,7 +62,8 @@ def list_projects():
     projects = [json.loads(row[0]) for row in rows]
     return sorted([{
         **{k: p[k] for k in ['id', 'title', 'status', 'stage', 'progress', 'updated_at', 'duration', 'video_id', 'source']},
-        'note_count': len(p['notes']), 'review_count': sum(n['confidence'] < .65 and not n['reviewed'] for n in p['notes'])
+        'note_count': len(p['notes']), 'review_count': sum(n['confidence'] < .65 and not n['reviewed'] for n in p['notes']),
+        'synced': bool(p.get('sync'))
     } for p in projects], key=lambda x: x['updated_at'], reverse=True)
 
 

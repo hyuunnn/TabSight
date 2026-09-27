@@ -1,5 +1,5 @@
-import {useEffect,useState} from 'react';
-import {Check,Plus,Trash2,ArrowRight,RotateCcw,Sparkles} from 'lucide-react';
+import {useEffect,useRef,useState} from 'react';
+import {Check,Plus,Trash2,ArrowRight,RotateCcw,Sparkles,Upload} from 'lucide-react';
 import {type Project,type Note,type Bar,type CapoSegment,type Settings,techniques,pitch,notePitch,clock,harmonicIntervals} from './types';
 
 export function NoteEditor({note,project,disabled,onSave,onDelete}:{note:Note;project:Project;disabled:boolean;onSave:(n:Note)=>void;onDelete:()=>void}){
@@ -39,7 +39,8 @@ function TuningFields({tunings,tuning,capo,segments,time,onTuning,onCapo,onSegme
 
 // Shown between preparing the media and transcribing it: fingering follows these settings, and
 // the capo cannot be told apart by sound, so the player checks them against the video first.
-export function SettingsConfirm({project,tunings,disabled,time,onStart}:{project:Project;tunings:Record<string,number[]>;disabled:boolean;time:number;onStart:(v:Settings)=>void}){
+export function SettingsConfirm({project,tunings,disabled,time,onStart,onScoreFile}:{project:Project;tunings:Record<string,number[]>;disabled:boolean;time:number;onStart:(v:Settings)=>void;onScoreFile:(file:File)=>void}){
+ const scoreInput=useRef<HTMLInputElement>(null);
  const detected:{tuning:number[]|null;capos:number[];text:string}={tuning:null,capos:[],text:'',...project.metadata.detected_settings};
  const previous=!!project.metadata.settings_confirmed;const described=!!detected.tuning;const capos=detected.capos.join(', ');
  // Filled in only from the description or an earlier confirmation; otherwise the player enters them.
@@ -48,7 +49,7 @@ export function SettingsConfirm({project,tunings,disabled,time,onStart}:{project
  const [segments,setSegments]=useState(project.capo_segments);
  const capoValid=capo!==null&&Number.isInteger(capo)&&capo>=0&&capo<=12;
  const missing=tuning===null&&!capoValid?'튜닝을 고르고 카포 프렛을 입력하면 시작할 수 있어요. 카포가 없으면 0이에요.':tuning===null?'튜닝을 고르면 시작할 수 있어요.':!capoValid?'카포 프렛을 0~12로 입력하면 시작할 수 있어요. 카포가 없으면 0이에요.':!segments.every(s=>s.start>=0&&Number.isInteger(s.capo)&&s.capo>=0&&s.capo<=12)?'구간별 카포는 0~12프렛, 시작은 0초 이후로 입력해 주세요.':'';
- const source=previous?'지난번 채보에 쓴 설정을 채워 두었어요.':described?'영상 설명에서 찾은 설정을 채워 두었어요.':`${detected.text?'설명의 튜닝 표기를 읽지 못했어요.':project.source==='youtube'?'영상 설명에 튜닝 정보가 없어요.':'가져온 파일에는 튜닝 정보가 없어요.'} ${detected.capos.length?'튜닝을 직접 골라':'튜닝과 카포를 직접 입력해'} 주세요.`;
+ const source=previous?project.metadata.tuning_source==='score'?'지난번에 올린 악보의 튜닝·카포를 채워 두었어요.':'지난번 채보에 쓴 설정을 채워 두었어요.':described?'영상 설명에서 찾은 설정을 채워 두었어요.':`${detected.text?'설명의 튜닝 표기를 읽지 못했어요.':project.source==='youtube'?'영상 설명에 튜닝 정보가 없어요.':'가져온 파일에는 튜닝 정보가 없어요.'} ${detected.capos.length?'튜닝을 직접 골라':'튜닝과 카포를 직접 입력해'} 주세요.`;
  return <div className="settings-confirm"><span className="eyebrow">BEFORE TRANSCRIPTION</span><h2>튜닝과 카포를 확인해 주세요</h2><p className="confirm-intro">채보는 이 설정으로 줄과 프렛을 정해요. 원본 연주를 재생해 카포 위치와 줄 튜닝을 확인한 뒤 시작하세요.</p>
  <div className={`settings-source ${previous||described?'':'missing'}`}><p>{source}</p>{detected.text&&<q>{detected.text}</q>}{!previous&&!described&&detected.capos.length>0&&<p>카포 {capos}프렛은 설명에서 찾아 채워 두었어요.</p>}</div>
  <TuningFields tunings={tunings} tuning={tuning} capo={capo} segments={segments} time={time} onTuning={setTuning} onCapo={setCapo} onSegments={setSegments}/>
@@ -56,7 +57,19 @@ export function SettingsConfirm({project,tunings,disabled,time,onStart}:{project
  {detected.capos.length>1&&!segments.length&&<p className="settings-hint">설명에 카포 {capos}프렛이 있어요. 곡 중간에 카포를 옮긴다면 영상을 그 시점으로 옮긴 뒤 구간별 카포 변경을 추가해 주세요.</p>}
  <p className="muted tiny">카포는 소리로 구분할 수 없어 영상으로 확인해야 해요. 프렛은 카포를 0으로 센 값이에요.</p>
  <button className="primary full" disabled={disabled||!!missing} onClick={()=>{if(tuning&&capo!==null&&!missing)onStart({tuning,capo,capo_segments:segments});}}><Sparkles size={16}/>이 설정으로 채보 시작</button>
- {missing&&<p className="muted tiny confirm-missing" role="status">{missing}</p>}</div>;
+ {missing&&<p className="muted tiny confirm-missing" role="status">{missing}</p>}
+ {/* A score someone already wrote beats a transcription: it is timed to the video instead. */}
+ <div className="score-file-option"><span className="or-divider">또는</span><h3>이 곡의 Guitar Pro 악보가 있다면</h3><p>사람이 채보한 악보 파일을 올리면 AI 채보 없이 그 악보를 영상 소리에 맞춰 보여 줘요. 튜닝·카포도 파일에 적힌 값을 써요.</p><button type="button" className="secondary full" disabled={disabled} onClick={()=>scoreInput.current?.click()}><Upload size={15}/>악보 파일로 맞추기 (.gp/.gp5)</button><input ref={scoreInput} hidden type="file" aria-label="맞출 악보 파일" accept=".gp,.gpx,.gp5,.gp4,.gp3" onChange={e=>{const f=e.target.files?.[0];e.target.value='';if(f)onScoreFile(f);}}/></div></div>;
+}
+
+// What was uploaded for a synced song, and the way back to the tuning/capo check.
+export function ScoreFileInfo({project,disabled,onReplace}:{project:Project;disabled:boolean;onReplace:()=>void}){
+ const file=project.metadata.score_file||{};const sync=project.metrics.sync||{};const tuning:number[]=file.tuning||[];
+ return <div className="settings-editor score-file-info"><div className="section-heading"><h3>올린 악보</h3><span className={`tag ${sync.reliable===false?'amber':'neutral'}`}>{sync.reliable===false?'싱크 확인 필요':'영상에 맞춤'}</span></div>
+ <dl className="score-file-facts"><div><dt>파일</dt><dd>{file.name}</dd></div><div><dt>트랙</dt><dd>{file.track_name||'기타'}{file.track_count>1&&` · ${file.track_count}개 트랙 중`}</dd></div><div><dt>튜닝</dt><dd>{tuning.map(pitch).join(' ')}</dd></div><div><dt>카포</dt><dd>{file.capo?`${file.capo}프렛`:'없음'}</dd></div></dl>
+ {sync.reliable===false?<p className="settings-warning">악보와 영상 소리가 잘 맞지 않아요. 같은 곡, 같은 편곡의 악보인지 확인해 주세요.</p>:sync.shift?<p className="settings-hint">영상 소리가 악보보다 {Math.abs(sync.shift)}반음 {sync.shift>0?'높아요':'낮아요'}. 영상의 카포나 튜닝이 악보와 다를 수 있어요.</p>:null}
+ <p className="muted tiny">영상 소리에 자동으로 맞춘 결과예요. 어긋나면 다른 악보를 올리거나 AI 채보로 돌아갈 수 있어요.</p>
+ <button className="secondary small full" disabled={disabled} onClick={onReplace}><RotateCcw size={14}/>악보 바꾸기 · AI 채보로 돌아가기</button></div>;
 }
 
 export function BarEditor({project,index,disabled,onSave}:{project:Project;index:number;disabled:boolean;onSave:(bar:Bar,all:boolean)=>void}){

@@ -67,6 +67,9 @@ class Project(BaseModel):
     tempo: float = Field(default=90, ge=20, le=300)
     notes: list[Note] = Field(default_factory=list)
     bars: list[Bar] = Field(default_factory=list)
+    # Set when the player's own score file was timed to the media instead of transcribing:
+    # [alphaTab playback tick, seconds in the original] pairs, ticks and times both increasing.
+    sync: list[tuple[int, float]] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     metadata: dict = Field(default_factory=dict)
     metrics: dict = Field(default_factory=dict)

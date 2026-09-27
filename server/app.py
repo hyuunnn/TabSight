@@ -58,9 +58,10 @@ def read(pid:str):return project(pid)
 def update(pid:str,body:Project):
     current=project(pid)
     if current.status in ['processing','queued']:raise HTTPException(409,'분석이 끝난 뒤 수정해 주세요.')
+    if current.sync:raise HTTPException(409,'올린 악보로 맞춘 곡은 음표를 고칠 수 없습니다. 원본 악보 파일에서 고쳐 주세요.')
     if body.id!=pid:raise HTTPException(422,'프로젝트 ID가 다릅니다.')
     # Preserve server-owned source/job fields.
-    for field in ['url','video_id','source','status','created_at','analysis_seconds','metadata','metrics']:
+    for field in ['url','video_id','source','status','created_at','analysis_seconds','metadata','metrics','sync']:
         setattr(body,field,getattr(current,field))
     for n in body.notes:
         if n.technique=='harmonic' and n.fret not in HARMONICS:raise HTTPException(422,'자연 하모닉스의 터치 프렛은 3, 4, 5, 7, 9, 12를 지원합니다.')
@@ -89,6 +90,8 @@ def cancel(pid:str):
 def retry(pid:str):
     p=project(pid)
     if p.status in ['processing','queued']:raise HTTPException(409,'이미 분석 중입니다.')
+    # Also the way back from a synced score: preparing again returns to the tuning/capo check.
+    p.sync=[];p.metadata.pop('score_file',None);pipeline.remove_score(project_dir(pid))
     p.status='queued';p.stage='대기 중';p.progress=0;p.error='';save_project(p);pipeline.submit(pid);return p
 
 
@@ -112,8 +115,50 @@ def start(pid:str,body:Settings):
     p.metadata.update(settings_confirmed=True,
         tuning_source='description' if body.tuning==detected.get('tuning') else 'manual',
         capo_source='description' if body.capo==described_capo and not body.capo_segments else 'manual')
+    p.sync=[];p.metadata.pop('score_file',None);pipeline.remove_score(project_dir(pid))
     p.status='queued';p.stage='대기 중';p.progress=.15;p.error=''
     save_project(p);pipeline.submit(pid,transcribe=True)
+    return p
+
+
+SCORE_TYPES=['.gp','.gpx','.gp5','.gp4','.gp3']
+
+
+@app.post('/api/projects/{pid}/score-file')
+async def score_file(pid:str,file:UploadFile=File(...)):
+    """Time the player's own Guitar Pro file to the media instead of transcribing.
+
+    The file is read here so a bad one is refused at once; the timing runs as a job.
+    """
+    p=project(pid)
+    if p.status!='awaiting_settings':raise HTTPException(409,'튜닝·카포를 확인하는 단계에서 악보를 올려 주세요.')
+    suffix=Path(file.filename or '').suffix.lower()
+    if suffix not in SCORE_TYPES:raise HTTPException(422,'Guitar Pro 악보 파일(.gp, .gpx, .gp5, .gp4, .gp3)을 선택해 주세요.')
+    data=await file.read(20*1024*1024+1)
+    if len(data)>20*1024*1024:raise HTTPException(413,'악보 파일은 20MB 이하로 선택해 주세요.')
+    folder=project_dir(pid)
+    with tempfile.TemporaryDirectory(prefix='upload-',dir=folder) as work:
+        path=Path(work)/('score'+suffix);path.write_bytes(data)
+        result=subprocess.run(['node',str(ROOT/'scripts'/'score-bridge.mjs'),'timeline',str(path)],capture_output=True,text=True,encoding='utf-8',timeout=120,cwd=ROOT)
+        if result.returncode==3:raise HTTPException(422,'기타 트랙이 있는 악보를 선택해 주세요.')
+        if result.returncode:raise HTTPException(422,'악보를 읽을 수 없습니다. 암호화되지 않은 Guitar Pro 파일을 선택해 주세요.')
+        timeline=json.loads(result.stdout)
+        if not any(n[1]>0 for n in timeline['notes']):raise HTTPException(422,'악보에 연주할 음표가 없습니다.')
+        pipeline.remove_score(folder)
+        path.rename(folder/('score'+suffix))
+    (folder/'score.timeline.json').write_text(result.stdout,encoding='utf-8')
+    tuning=timeline['tuning'];capo=int(timeline['capo'] or 0)
+    p.metadata['score_file']={'name':Path(file.filename).name,'file':'score'+suffix,'title':timeline['title'],'artist':timeline['artist'],
+        'track':timeline['track'],'track_name':timeline['track_name'],'track_count':timeline['track_count'],
+        'tuning':tuning,'capo':capo,'bars':timeline['bar_count'],'tempo':timeline['tempo']}
+    # The file names the tuning and capo, so there is nothing left for the player to confirm.
+    # A 7-string or bass track keeps the placeholder; its own tuning stays in score_file.
+    if len(tuning)==6 and all(24<=n<=84 for n in tuning):p.tuning=tuning
+    if 0<=capo<=12:p.capo=capo
+    p.capo_segments=[]
+    p.metadata.update(settings_confirmed=True,tuning_source='score',capo_source='score')
+    p.status='queued';p.stage='대기 중';p.progress=.15;p.error=''
+    save_project(p);pipeline.submit(pid,sync=True)
     return p
 
 
@@ -127,6 +172,7 @@ class Revoice(Settings):
 def revoice(pid:str,body:Revoice):
     p=project(pid)
     if p.status!='ready':raise HTTPException(409,'분석이 끝난 뒤 수정해 주세요.')
+    if p.sync:raise HTTPException(409,'올린 악보로 맞춘 곡은 튜닝·카포를 바꿀 수 없습니다.')
     rev=p.revision;p.tuning=body.tuning;p.capo=body.capo;p.capo_segments=body.capo_segments
     try:
         Project.model_validate(p.model_dump());assign_fingering(p,strict=not body.allow_unplayable)
@@ -145,6 +191,12 @@ def media(pid:str,kind:str):
 @app.get('/api/projects/{pid}/score/{fmt}')
 def export(pid:str,fmt:str,preview:bool=False):
     p=project(pid)
+    if fmt=='original':
+        # The uploaded file itself: the browser displays it and it is what a synced song exports.
+        score=p.metadata.get('score_file')
+        path=project_dir(pid)/score['file'] if score else None
+        if not path or not path.exists():raise HTTPException(404,'올린 악보가 없습니다.')
+        return FileResponse(path,media_type='application/octet-stream',filename=score['name'],headers={'Cache-Control':'no-store'})
     if fmt not in ['gp5','gp','json']:raise HTTPException(404)
     if fmt=='json':return Response(p.model_dump_json(indent=2),media_type='application/json',headers={'Content-Disposition':'attachment; filename="tabsight.json"'})
     try:data=gp5_bytes(p,preview=preview)

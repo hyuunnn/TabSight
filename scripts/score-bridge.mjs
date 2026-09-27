@@ -43,4 +43,22 @@ if (mode === 'convert') {
     }
   }
   console.log(JSON.stringify({title:score.title||'가져온 악보',tuning:[...staff.tuning].reverse(),capo:staff.capo,tempo:score.tempo||90,duration:time,bars,notes,metadata:{channel:score.artist,imported_track:track.name,track_count:score.tracks.length}}));
+} else if (mode === 'timeline') {
+  // The score in playback order, as alphaTab's player plays it: repeats and alternate endings
+  // unrolled, on the same tick axis as the browser's tickPosition (960 ticks per quarter note).
+  // The sync step matches these notes against the video's sound.
+  const guitar=t=>t.staves[0]&&!t.staves[0].isPercussion&&t.staves[0].tuning.length>0;
+  const track=score.tracks.find(guitar);
+  if(!track){console.error('No guitar track');process.exit(3);}
+  const staff=track.staves[0];const notes=[];const tempos=[];
+  const ignore=()=>{};
+  const handler={addTickShift:ignore,addTimeSignature:ignore,addRest:ignore,addControlChange:ignore,addProgramChange:ignore,addBend:ignore,addNoteBend:ignore,finishTrack:ignore,
+    addTempo:(tick,bpm)=>tempos.push([tick,bpm]),
+    addNote:(trackIndex,start,length,key)=>{if(trackIndex===track.index)notes.push([start,length,key]);}};
+  const generator=new at.midi.MidiFileGenerator(score,settings,handler);
+  generator.generate();
+  const played=generator.tickLookup.masterBars.map(b=>[b.masterBar.index,b.start,b.end]);
+  console.log(JSON.stringify({title:score.title,artist:score.artist,track:track.index,track_name:track.name,track_count:score.tracks.length,
+    tuning:[...staff.tuning].reverse(),capo:staff.capo,tempo:score.tempo,bar_count:score.masterBars.length,
+    end:played.length?played.at(-1)[2]:0,tempos,bars:played,notes}));
 } else throw new Error('Unknown mode');
