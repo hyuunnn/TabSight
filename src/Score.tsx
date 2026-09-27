@@ -12,7 +12,9 @@ export default function Score(props:Props){
  const [busy,setBusy]=useState(true);const [error,setError]=useState('');
  const toTick=(time:number)=>{const p=latest.current.project;const api=apiRef.current;if(!api?.score)return 0;const idx=Math.max(0,p.bars.findLastIndex(b=>b.start<=time));const b=p.bars[idx];const mb=api.score.masterBars[idx];return mb&&b?mb.start+Math.max(0,Math.min(1,(time-b.start)/(b.end-b.start)))*mb.calculateDuration():0;};
  const fromTick=(tick:number)=>{const api=apiRef.current;const p=latest.current.project;if(!api?.score)return 0;const i=api.score.masterBars.findLastIndex(b=>b.start<=tick);const mb=api.score.masterBars[i];const b=p.bars[i];return b&&mb?b.start+(tick-mb.start)/mb.calculateDuration()*(b.end-b.start):0;};
- const canonical=(n:at.model.Note)=>{const p=latest.current.project;const bi=n.beat.voice.bar.index;const b=p.bars[bi];const mb=n.beat.voice.bar.masterBar;if(!b)return undefined;const t=b.start+n.beat.playbackStart/mb.calculateDuration()*(b.end-b.start);const candidates=p.notes.filter(x=>(n.beat.voice.bar.staff.isPercussion?x.technique==='percussion':x.string===7-n.string)&&Math.abs(x.start-t)<.3);return candidates.sort((a,b)=>Math.abs(a.start-t)-Math.abs(b.start-t))[0];};
+ // Original-media time where a rendered beat starts, from its bar's actual start and end.
+ const beatTime=(beat:at.model.Beat)=>{const b=latest.current.project.bars[beat.voice.bar.index];const mb=beat.voice.bar.masterBar;return b?b.start+beat.playbackStart/mb.calculateDuration()*(b.end-b.start):undefined;};
+ const canonical=(n:at.model.Note)=>{const p=latest.current.project;const t=beatTime(n.beat);if(t===undefined)return undefined;const candidates=p.notes.filter(x=>(n.beat.voice.bar.staff.isPercussion?x.technique==='percussion':x.string===7-n.string)&&Math.abs(x.start-t)<.3);return candidates.sort((a,b)=>Math.abs(a.start-t)-Math.abs(b.start-t))[0];};
  useEffect(()=>{
   if(!host.current)return;
   const element=host.current;
@@ -69,6 +71,10 @@ export default function Score(props:Props){
   api.postRenderFinished.on(restorePosition);
   api.midiLoaded.on(restorePosition);
   api.error.on(e=>{setBusy(false);setError(String(e.message||e));});
+  // alphaTab moves only its own player to a clicked beat, and the video follows that in 악보음 mode
+  // alone. Seek both here, so 원음 mode also goes to a click beside a fret number or on a tied one.
+  api.beatMouseDown.on(beat=>{const t=beatTime(beat);if(t!==undefined)latest.current.onSeek(t);});
+  // A fret number then also selects its note and goes to where the note actually starts.
   api.noteMouseDown.on(n=>{const original=canonical(n);if(original){latest.current.onSelect(original);latest.current.onSeek(original.start);}});
   api.playerPositionChanged.on(e=>{syncVisuals(e.currentTick);latest.current.onPosition(fromTick(e.currentTick));});
   api.playerStateChanged.on(e=>latest.current.onPlaying(e.state===at.synth.PlayerState.Playing));
