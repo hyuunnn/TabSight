@@ -15,7 +15,7 @@
 
 ## 실제 파이프라인
 
-YouTube/로컬 영상 → FFmpeg 16kHz 모노 → GAPS 음표 이벤트 → 비트·마디 초안 → 튜닝/카포 후보 → 동시 음표의 현 중복을 제한한 beam search → 주법 후보 → 사용자 수정 → GP5/GP7.
+YouTube/로컬 영상 → FFmpeg 16kHz 모노 → 설명의 튜닝·카포로 채운 채보 전 사용자 확인 → GAPS 음표 이벤트 → 비트·마디 초안 → 동시 음표의 현 중복을 제한한 beam search → 주법 후보 → 사용자 수정 → GP5/GP7.
 
 GAPS는 `guitar-gaps-paper-version-12200_iterations.pth`를 실행한다. 피아노 기본 가중치나 비어 있는 HF wrapper state로 대체하지 않는다. `weights_only=True`로 읽고, numpy 메타데이터에 필요한 타입만 허용하며 구조는 `strict=True`로 검증한다.
 

@@ -10,10 +10,12 @@ TabSight는 한 사람이 자신의 Mac에서 사용하는 웹앱이다. 브라�
 flowchart TD
     U[브라우저: React] -->|HTTP /api| A[FastAPI: 127.0.0.1:8787]
     A --> D[(SQLite: 프로젝트와 편집 이력)]
-    A --> Q[분석 큐: 한 번에 한 작업]
-    Q --> M[yt-dlp / FFmpeg: 영상과 16kHz 음성]
-    M --> G[GAPS: 음표 추론]
-    G --> B[비트 / 튜닝 / 카포 / 운지]
+    A --> R[준비 큐: 한 번에 한 곡]
+    R --> M[yt-dlp / FFmpeg: 영상과 16kHz 음성, 설명의 튜닝·카포]
+    M --> C{브라우저: 사용자가 튜닝·카포 확인}
+    C -->|POST /start| Q[채보 큐: 한 번에 한 곡]
+    Q --> G[GAPS: 음표 추론]
+    G --> B[비트 / 운지]
     B --> F[주법 후보]
     F --> D
     A --> E[PyGuitarPro: GP5 생성]
@@ -28,14 +30,15 @@ flowchart TD
 
 ## 2. URL 입력부터 초안 완성까지
 
-1. **프로젝트 생성**: 서버가 YouTube 주소에서 11자리 영상 ID를 검증하고 프로젝트를 `queued` 상태로 저장한다. 브라우저에 프로젝트 ID를 돌려주고 분석 큐에 넣는다.
-2. **미디어 준비**: yt-dlp로 영상을 내려받고 제목·채널·설명을 보관한다. FFmpeg로 16kHz 모노 WAV와 미리보기 이미지를 만든다.
-3. **음표 추론**: GAPS 체크포인트를 처음 필요할 때 내려받고 메모리에 로드한다. 음성을 나누어 음높이, 시작·끝, 세기를 추론한다.
-4. **악보 골격 생성**: 비트를 추적해 4/4 마디 초안을 만들고, 설명과 연주 가능 음역으로 튜닝·카포를 추정한다.
-5. **운지와 주법 정리**: 음높이를 유지한 채 연주 가능한 줄·프렛을 고르고, 신호·운지 규칙으로 주법 후보를 표시한다.
-6. **완료**: 결과를 저장하고 `ready`로 바꾼다. 브라우저가 미리보기 GP5를 요청해 alphaTab으로 표시한다. `ready`는 초안 생성 완료를 뜻하며 정답 검증 완료를 뜻하지 않는다.
+1. **프로젝트 생성**: 서버가 YouTube 주소에서 11자리 영상 ID를 검증하고 프로젝트를 `queued` 상태로 저장한다. 브라우저에 프로젝트 ID를 돌려주고 준비 큐에 넣는다.
+2. **미디어 준비**: yt-dlp로 영상을 내려받고 제목·채널·설명을 보관한다. FFmpeg로 16kHz 모노 WAV와 미리보기 이미지를 만든다. 설명에서 튜닝·카포를 읽어 설정 칸을 미리 채우고 `awaiting_settings`로 멈춘다.
+3. **설정 확인**: 사용자가 원본 영상을 재생하며 튜닝·카포를 확인하거나 고친 뒤 채보를 시작한다. 설명에서 튜닝을 찾지 못하면 칸을 비워 두며, 튜닝과 카포를 입력해야 시작할 수 있다. 확인한 값은 `POST /start`로 저장되고 채보 큐에 들어간다.
+4. **음표 추론**: GAPS 체크포인트를 처음 필요할 때 내려받고 메모리에 로드한다. 음성을 나누어 음높이, 시작·끝, 세기를 추론한다.
+5. **악보 골격 생성**: 비트를 추적해 4/4 마디 초안을 만든다.
+6. **운지와 주법 정리**: 확인한 튜닝·카포로 음높이를 유지한 채 연주 가능한 줄·프렛을 고르고, 신호·운지 규칙으로 주법 후보를 표시한다. 배치하지 못한 음이 반복되면 더 맞는 튜닝을 제안만 하고 설정은 바꾸지 않는다.
+7. **완료**: 결과를 저장하고 `ready`로 바꾼다. 브라우저가 미리보기 GP5를 요청해 alphaTab으로 표시한다. `ready`는 초안 생성 완료를 뜻하며 정답 검증 완료를 뜻하지 않는다.
 
-화면에서는 이 과정을 영상 준비, 음표 추론, 운지 정리 세 단계로 묶어 진행률과 함께 보여 준다.
+화면에서는 분석 과정을 영상 준비, 음표 추론, 운지 정리 세 단계로 묶어 진행률과 함께 보여 준다. 영상 준비가 끝나면 진행 화면 대신 설정 확인 화면이 나타나고, 연습실 목록에는 `튜닝·카포를 확인해 주세요`가 표시된다.
 
 ![분석 중 화면. 음표 추론 단계에서 진행률 43%가 표시되어 있다.](images/analyzing.png)
 
@@ -47,8 +50,14 @@ sequenceDiagram
     participant D as SQLite
     B->>A: POST /api/projects {url}
     A->>D: queued 프로젝트 저장
-    A->>W: 작업 제출
+    A->>W: 준비 작업 제출
     A-->>B: 프로젝트 ID
+    W->>D: 미디어·설명의 튜닝·카포, awaiting_settings 저장
+    B->>A: GET /api/projects/{id}
+    A-->>B: 미리 채운 설정과 설명 인용
+    B->>A: POST /api/projects/{id}/start {tuning, capo, capo_segments}
+    A->>D: 확인한 설정, queued 저장
+    A->>W: 채보 작업 제출
     loop 분석 중 약 1.2초마다
         W->>D: 단계와 진행률 저장
         B->>A: GET /api/projects/{id}
@@ -60,7 +69,7 @@ sequenceDiagram
     B->>B: alphaTab 렌더링
 ```
 
-분석 작업은 `ThreadPoolExecutor(max_workers=1)`에서 순차 실행한다. 진행률은 단계별 고정 비중이며 남은 시간 예측값이 아니다. `analysis_seconds`는 작업 실행 시작부터 완료까지의 시간으로 큐에서 기다린 시간은 제외한다.
+영상 준비와 채보는 각각 `ThreadPoolExecutor(max_workers=1)`에서 순차 실행한다. 준비 큐가 따로 있어 다른 곡을 채보하는 동안에도 새 곡은 설정 확인 단계까지 진행하고, 모델 추론은 한 번에 한 곡만 한다. 진행률은 단계별 고정 비중이며 남은 시간 예측값이 아니다. `analysis_seconds`는 준비 작업과 채보 작업의 실행 시간 합으로, 큐에서 기다린 시간과 설정 확인을 기다린 시간은 제외한다.
 
 ## 3. 코드의 역할
 
@@ -68,11 +77,11 @@ sequenceDiagram
 |---|---|
 | [src/App.tsx](../src/App.tsx) | 프로젝트 선택, 분석 상태 조회, 원본 재생, A/B 반복, 저장, 실행 취소 |
 | [src/Score.tsx](../src/Score.tsx) | alphaTab 연결, 악보 렌더링, 합성음, 시간↔tick 변환, 음표 클릭 |
-| [src/Editors.tsx](../src/Editors.tsx) | 음표·마디·튜닝·카포 편집 UI |
+| [src/Editors.tsx](../src/Editors.tsx) | 채보 전 튜닝·카포 확인, 음표·마디·튜닝·카포 편집 UI |
 | [src/types.ts](../src/types.ts) | 프런트엔드 데이터 타입 |
 | [server/app.py](../server/app.py) | HTTP API, 요청 검증, 가져오기·내보내기 연결 |
-| [server/pipeline.py](../server/pipeline.py) | 작업 큐, 미디어 준비, GAPS 실행, 단계 연결, 취소·오류 처리 |
-| [server/music.py](../server/music.py) | 튜닝·카포 후보, 운지 탐색, 마디, 주법 규칙 |
+| [server/pipeline.py](../server/pipeline.py) | 준비·채보 작업 큐, 미디어 준비, GAPS 실행, 단계 연결, 취소·오류 처리 |
+| [server/music.py](../server/music.py) | 설명의 튜닝·카포 읽기, 튜닝 제안, 운지 탐색, 마디, 주법 규칙 |
 | [server/models.py](../server/models.py) | 프로젝트·음표·마디의 데이터 형식과 기본 검증 |
 | [server/store.py](../server/store.py) | SQLite 저장, revision과 편집 이력, 데이터 경로 |
 | [server/export.py](../server/export.py) | 시간 양자화, 트랙·타이·주법 구성, GP5 쓰기 |
@@ -93,7 +102,7 @@ sequenceDiagram
 | `bars` | 각 마디의 실제 시작·끝 초, 박자, 템포 |
 | `confidence / reviewed` | 검토 우선순위를 위한 값 / 사용자가 검토했는지 여부 |
 | `evidence` | `audio`, `technique-candidate`, `manual` 등 추정·수정 근거. 이전 버전 분석에는 `vision`이 남아 있을 수 있음 |
-| `metadata / metrics` | 원본 설명과 설정 출처 / 분석 실행 시의 집계 |
+| `metadata / metrics` | 원본 설명과 설정 출처 / 분석 실행 시의 집계. `detected_settings`는 설명에서 읽은 튜닝·카포와 그 줄, `settings_confirmed`는 채보 전 확인 여부, `tuning_source`·`capo_source`는 `description`(설명 값 그대로) 또는 `manual`(직접 입력·수정), `suggested_tuning`은 확인한 설정으로 배치하지 못한 음이 반복될 때의 제안. 이전 버전 분석에는 `audio-inference`, `settings_source`가 남아 있을 수 있음 |
 | `revision` | 편집 충돌 방지와 화면 갱신에 쓰는 버전 번호 |
 
 일반 음의 관계는 `midi = tuning[6 - string] + capo_at(start) + fret`다. 같은 음높이의 여러 운지를 탐색하는 과정은 [알고리즘 문서](algorithms.md)에 설명한다.
@@ -161,12 +170,13 @@ alphaTab의 재생선은 CSS transform으로 크기가 조정되므로 `width: 2
 |---|---|
 | `GET /api/health` | 서버 상태, 튜닝 프리셋, GAPS 파일 캐시 여부 |
 | `GET /api/projects` | 프로젝트 요약 목록 |
-| `POST /api/projects` | `{url}`로 분석 작업 생성 |
+| `POST /api/projects` | `{url}`로 준비 작업 생성. 미디어 준비 후 `awaiting_settings`에서 멈춤 |
 | `GET /api/projects/{id}` | 전체 프로젝트 조회 |
 | `PUT /api/projects/{id}` | revision을 포함한 프로젝트 편집 저장 |
 | `DELETE /api/projects/{id}` | 프로젝트·편집 이력·`projects/<id>/` 폴더 삭제. 분석 중이면 409 |
+| `POST /api/projects/{id}/start` | 확인한 `{tuning, capo, capo_segments}`로 채보 시작. `awaiting_settings`가 아니면 409, 범위를 벗어난 값은 422 |
 | `POST /api/projects/{id}/cancel` | 취소 요청 |
-| `POST /api/projects/{id}/retry` | 다시 분석 |
+| `POST /api/projects/{id}/retry` | 다시 준비해 설정 확인 단계로. 이전에 확인한 설정을 채워 둠 |
 | `POST /api/projects/{id}/revoice` | 튜닝·카포·구간별 카포 변경과 운지 재계산. 배치할 수 없는 음은 `allow_unplayable`이 참이면 운지 미정으로 남기고, 아니면 원인과 함께 422 |
 | `GET /api/projects/{id}/media/{kind}` | `video`, `audio`, `poster` 제공 |
 | `GET /api/projects/{id}/score/{fmt}` | `gp5`, `gp`, `json` 생성 |
@@ -176,8 +186,8 @@ alphaTab의 재생선은 CSS transform으로 크기가 조정되므로 `width: 2
 
 ## 9. 실패·재시작·가져오기
 
-- 정상 상태는 `queued → processing → ready`, 중단은 `cancelled`, 실패는 `error`다. 취소는 다운로드 훅·추론 청크 경계 등 다음 확인 지점에서 적용되므로 즉시 끝나지 않을 수 있다.
+- 정상 상태는 `queued → processing → awaiting_settings → queued → processing → ready`, 중단은 `cancelled`, 실패는 `error`다. 앞의 `processing`은 영상 준비, 뒤는 채보다. 취소는 다운로드 훅·추론 청크 경계 등 다음 확인 지점에서 적용되므로 즉시 끝나지 않을 수 있다.
 - MPS에서 추론 중 `RuntimeError` 또는 `NotImplementedError`가 발생하면 같은 모델을 CPU로 옮겨 해당 청크를 다시 계산한다. 모든 종류의 실패를 복구한다는 뜻은 아니다.
-- 서버를 재시작할 때 남아 있는 `queued`·`processing` 작업은 오류 상태로 전환한다. 다시 분석하면 남은 미디어를 활용하지만 **추론 청크부터 이어서 재개하지 않고 다시 계산**한다. 재분석은 기존 초안과 편집 내용을 대체할 수 있다.
+- 서버를 재시작할 때 남아 있는 `queued`·`processing` 작업은 오류 상태로 전환한다. `awaiting_settings`는 사용자를 기다리는 상태이므로 그대로 둔다. 다시 분석하면 남은 미디어를 활용해 설정 확인 단계로 돌아가며, 채보는 **추론 청크부터 이어서 재개하지 않고 다시 계산**한다. 재분석은 기존 초안과 편집 내용을 대체할 수 있다.
 - GP/GP5/GP4/GP3 가져오기는 모델 추론 없이 기존 악보를 읽는다. 첫 기타 트랙을 편집 모델로 변환하며 여러 트랙·반복 구조를 완전히 보존하는 왕복 편집기는 아니다. 원본과 AI 결과를 구분해 표시한다.
-- 영상·음성 가져오기는 파일 변환 후 분석 큐에 넣는다. 변환 일부는 가져오기 HTTP 요청 안에서 실행되므로 큰 파일에서는 응답이 늦을 수 있다.
+- 영상·음성 가져오기는 파일 변환 후 준비 큐에 넣는다. 설명이 없으므로 설정 확인 단계에서 튜닝과 카포를 직접 입력한다. 변환 일부는 가져오기 HTTP 요청 안에서 실행되므로 큰 파일에서는 응답이 늦을 수 있다.

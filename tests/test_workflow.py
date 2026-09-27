@@ -144,7 +144,13 @@ def test_described_tuning_without_capo_is_played_without_capo(monkeypatch):
         seen['called']=True
         return [Note(id=str(i),midi=m,start=i*.5,end=i*.5+.4) for i,m in enumerate([38,45,57,62,69])],'cpu'
     monkeypatch.setattr(pipeline,'transcribe_audio',transcribe)
+    # Nothing is transcribed until the player confirms the settings the description filled in.
     pipeline.run(p.id);q=get_project(p.id)
+    assert 'called' not in seen and q.status=='awaiting_settings' and q.tuning==[33,38,55,60,52,57] and q.capo==0
+    assert q.metadata['detected_settings']=={'tuning':[33,38,55,60,52,57],'capos':[],'text':'Tuning : ADGCEA (Baritone Nashville Tuning)'}
+    monkeypatch.setattr(pipeline,'submit',lambda pid,transcribe=False:pipeline.run(pid,transcribe))
+    assert client.post(f'/api/projects/{p.id}/start',json={'tuning':q.tuning,'capo':q.capo}).status_code==200
+    q=get_project(p.id)
     assert seen['called'] and q.status=='ready' and q.tuning==[33,38,55,60,52,57] and q.capo==0
     assert q.metadata['tuning_source']==q.metadata['capo_source']=='description'
     assert all(n.string for n in q.notes if n.technique!='percussion')

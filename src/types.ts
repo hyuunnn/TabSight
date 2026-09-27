@@ -1,6 +1,8 @@
 export type Note={id:string;midi:number;start:number;end:number;string:number;fret:number;velocity:number;confidence:number;technique:string;reviewed:boolean;evidence:string[]};
 export type Bar={start:number;end:number;numerator:number;denominator:number;tempo:number};
-export type Project={id:string;title:string;url:string;video_id:string;source:string;status:string;stage:string;progress:number;error:string;revision:number;duration:number;analysis_seconds:number;tuning:number[];capo:number;capo_segments:{start:number;capo:number}[];tempo:number;notes:Note[];bars:Bar[];warnings:string[];metadata:Record<string,any>;metrics:Record<string,any>};
+export type CapoSegment={start:number;capo:number};
+export type Settings={tuning:number[];capo:number;capo_segments:CapoSegment[]};
+export type Project={id:string;title:string;url:string;video_id:string;source:string;status:string;stage:string;progress:number;error:string;revision:number;duration:number;analysis_seconds:number;tuning:number[];capo:number;capo_segments:CapoSegment[];tempo:number;notes:Note[];bars:Bar[];warnings:string[];metadata:Record<string,any>;metrics:Record<string,any>};
 export type Summary=Pick<Project,'id'|'title'|'status'|'stage'|'progress'|'source'|'duration'|'video_id'>&{note_count:number;review_count:number};
 export const techniques:Record<string,string>={normal:'일반음',hammer:'해머온',pull:'풀오프',slide:'슬라이드',harmonic:'하모닉스',mute:'팜 뮤트',slap:'슬랩',percussion:'바디 퍼커션',bend:'벤딩',vibrato:'비브라토'};
 export const pitch=(n:number)=>['C','C♯','D','D♯','E','F','F♯','G','G♯','A','A♯','B'][((n%12)+12)%12]+(Math.floor(n/12)-1);

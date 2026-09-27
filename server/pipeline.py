@@ -15,11 +15,14 @@ from urllib.parse import parse_qs,urlparse
 
 import numpy as np
 
-from .models import Note,Project
-from .music import assign_fingering,build_bars,choose_settings,metadata_settings,suggest_techniques
+from .models import Note,Project,STANDARD
+from .music import assign_fingering,build_bars,choose_settings,metadata_settings,suggest_techniques,tuning_name
 from .store import DATA,get_project,project_dir,save_project
 
 EXECUTOR=ThreadPoolExecutor(max_workers=1,thread_name_prefix='tabsight')
+# Preparing media ends at the player's tuning/capo check, so it must not wait behind another
+# song's transcription. The model itself still runs one song at a time on EXECUTOR.
+PREPARE=ThreadPoolExecutor(max_workers=1,thread_name_prefix='tabsight-prepare')
 CANCEL:dict[str,threading.Event]={}
 _MODEL=None
 
@@ -36,9 +39,10 @@ def video_id(url):
     return vid
 
 
-def submit(pid):
+def submit(pid,transcribe=False):
+    """Queue media preparation, or transcription once the player has confirmed tuning and capo."""
     CANCEL[pid]=threading.Event()
-    EXECUTOR.submit(run,pid)
+    (EXECUTOR if transcribe else PREPARE).submit(run,pid,transcribe)
 
 
 def cancel(pid):
@@ -100,84 +104,110 @@ def transcribe_audio(y,sr,progress,cancelled):
     return events,device
 
 
-def run(pid):
-    started=time.monotonic();folder=project_dir(pid)
+def _extract_audio(folder):
+    media=folder/'source.mp4'
+    subprocess.run(['ffmpeg','-nostdin','-hide_banner','-loglevel','error','-y','-i',str(media),'-vn','-ac','1','-ar','16000',str(folder/'audio.wav')],check=True,timeout=300,capture_output=True)
+    subprocess.run(['ffmpeg','-nostdin','-hide_banner','-loglevel','error','-y','-ss','10','-i',str(media),'-frames:v','1',str(folder/'poster.jpg')],timeout=60,capture_output=True)
+
+
+def _prepare(pid,folder,update,event):
+    """Fetch the media and read the description, then stop until the player confirms tuning and capo."""
+    started=time.monotonic()
+    p=get_project(pid)
+    update('영상을 가져오는 중',.03)
+    media=folder/'source.mp4';audio=folder/'audio.wav'
+    if not media.exists() and not audio.exists():
+        import yt_dlp
+        def hook(d):
+            if event.is_set():raise InterruptedError('분석을 취소했습니다.')
+        opts={'format':'bv[height<=720][ext=mp4]+ba[ext=m4a]/b[height<=720]/best',
+              'outtmpl':str(folder/'source.%(ext)s'),'merge_output_format':'mp4','noplaylist':True,
+              'quiet':True,'no_warnings':True,'socket_timeout':20,'retries':2,'progress_hooks':[hook],
+              'writeinfojson':True}
+        with yt_dlp.YoutubeDL(opts) as ydl:info=ydl.extract_info(p.url,download=True)
+        p=get_project(pid);p.title=info.get('title',p.title);p.duration=info.get('duration',0)
+        p.metadata={'description':info.get('description',''),'channel':info.get('channel',''),'thumbnail':info.get('thumbnail','')}
+        if not media.exists():
+            source=next((f for f in folder.iterdir() if f.suffix in ['.mp4','.mkv','.webm']),None)
+            if source:source.rename(media)
+        save_project(p)
+    update('소리를 준비하는 중',.12)
+    if media.exists():_extract_audio(folder)
+    import soundfile as sf
+    duration=sf.info(str(audio)).duration
+    if duration<1:raise ValueError('분석할 연주 구간이 너무 짧습니다.')
+    tuning,capos,line=metadata_settings(p.metadata.get('description',''))
+    if event.is_set():raise InterruptedError('분석을 취소했습니다.')
+    p=get_project(pid)
+    # The screen quotes what the description said next to the fields it filled in.
+    p.metadata['detected_settings']={'tuning':tuning,'capos':capos,'text':line.strip()}
+    if not p.metadata.get('settings_confirmed'):
+        # A description that names the tuning but no capo means no capo. Guessing it from the
+        # pitch range picked capos the player never used (capo 4 on a baritone song). Without a
+        # named tuning the screen asks the player, so the tuning stored here is a placeholder.
+        p.tuning=tuning or STANDARD.copy();p.capo=capos[0] if capos else 0;p.capo_segments=[]
+    p.metadata['prepare_seconds']=round(time.monotonic()-started,2)
+    p.duration=duration;p.status='awaiting_settings';p.stage='튜닝·카포를 확인해 주세요';p.progress=.15
+    save_project(p)
+
+
+def _transcribe(pid,folder,update,event):
+    """Transcribe with the tuning and capo the player confirmed; a guess never replaces them."""
+    started=time.monotonic();audio=folder/'audio.wav'
+    update('기타 음표를 듣는 중 · 첫 실행은 모델을 준비합니다',.18)
+    if not audio.exists() and (folder/'source.mp4').exists():_extract_audio(folder)
+    if not audio.exists():raise ValueError('준비된 음성이 없습니다. 다시 분석해 주세요.')
+    import soundfile as sf
+    import librosa
+    y,sr=sf.read(audio,dtype='float32')
+    if y.ndim>1:y=y.mean(axis=1)
+    if sr!=16000:y=librosa.resample(y,orig_sr=sr,target_sr=16000);sr=16000
+    duration=len(y)/sr
+    # Transcription takes most of the analysis time, so it gets most of the progress bar.
+    notes,device=transcribe_audio(y,sr,lambda f:update('기타 음표를 듣는 중',.18+.67*f),event.is_set)
+    if not notes:raise ValueError('기타 음표를 찾지 못했습니다. 연주가 잘 들리는 영상을 사용해 주세요.')
+    update('박자와 마디를 정리하는 중',.86)
+    env=librosa.onset.onset_strength(y=y,sr=sr,hop_length=256)
+    tempo,beats=librosa.beat.beat_track(onset_envelope=env,sr=sr,hop_length=256,trim=False)
+    tempo=float(np.clip(np.asarray(tempo).reshape(-1)[0],30,240))
+    beat_times=librosa.frames_to_time(beats,sr=sr,hop_length=256)
+    p=get_project(pid);p.notes=notes;p.duration=duration;p.tempo=tempo
+    p.bars=build_bars(notes,duration,tempo,beat_times)
+    p.warnings=['줄·프렛 및 특수 주법은 추정 결과입니다. 검토 표시를 확인해 주세요.', '박자·마디 시작은 자동 추정입니다. 루바토와 못갖춘마디는 보정이 필요할 수 있습니다.']
+    capos=(p.metadata.get('detected_settings') or {}).get('capos') or []
+    if len(capos)>1 and not p.capo_segments:p.warnings.append(f'설명에 카포 {", ".join(map(str,capos))}프렛이 있습니다. 구간별 카포 변경을 확인해 주세요.')
+    update('운지와 연주 기법을 정리하는 중',.9)
+    stats=assign_fingering(p)
+    p.metadata.pop('suggested_tuning',None)
+    if stats['unassigned']:
+        # Descriptions can be wrong or describe an earlier recording, and a player may confirm one
+        # without checking. Repeated out-of-reach notes suggest another tuning, but the confirmed
+        # one stays: those notes keep their pitch without a string, for review.
+        suggested,_=choose_settings(p.notes,p.tuning,p.capo)
+        if suggested!=p.tuning:
+            p.metadata['suggested_tuning']=suggested
+            p.warnings.append(f'확인한 튜닝·카포로 낼 수 없는 음이 반복됩니다. 카포가 맞다면 소리로는 {tuning_name(suggested)} 튜닝이 더 맞아 보입니다. 원음과 비교해 튜닝·카포를 확인해 주세요.')
+    suggest_techniques(p,y,sr)
+    p.warnings.append('특수 주법 자동 표기는 실험적입니다. 원본 연주와 비교해 수정해 주세요.')
+    p.warnings.append('파일의 리듬은 64분음표 단위까지 표현합니다. 같은 줄의 잔향은 다음 음이 시작할 때 끝나도록 정리합니다.')
+    p.metrics={'audio_model':'GAPS paper checkpoint (2024)','device':device,**stats,
+               'accuracy_verified':False,'note_count':len(p.notes)}
+    if stats['unassigned']:p.warnings.append(f'{stats["unassigned"]}개 음의 운지가 미정입니다. 내보내기 전에 수정해 주세요.')
+    if event.is_set():raise InterruptedError('분석을 취소했습니다.')
+    # Time spent in a queue or waiting for the player's confirmation is not analysis time.
+    p.analysis_seconds=round(p.metadata.get('prepare_seconds',0)+time.monotonic()-started,2)
+    p.status='ready';p.stage='채보 초안 준비 완료';p.progress=1
+    save_project(p)
+    (folder/'analysis-report.json').write_text(json.dumps({'seconds':p.analysis_seconds,**p.metrics},ensure_ascii=False,indent=2))
+
+
+def run(pid,transcribe=False):
+    folder=project_dir(pid)
     event=CANCEL.setdefault(pid,threading.Event())
     def update(stage,progress):
         if event.is_set():raise InterruptedError('분석을 취소했습니다.')
         p=get_project(pid);p.status='processing';p.stage=stage;p.progress=float(progress);save_project(p)
-    try:
-        p=get_project(pid)
-        update('영상을 가져오는 중',.03)
-        media=folder/'source.mp4';audio=folder/'audio.wav'
-        if not media.exists() and not audio.exists():
-            import yt_dlp
-            def hook(d):
-                if event.is_set():raise InterruptedError('분석을 취소했습니다.')
-            opts={'format':'bv[height<=720][ext=mp4]+ba[ext=m4a]/b[height<=720]/best',
-                  'outtmpl':str(folder/'source.%(ext)s'),'merge_output_format':'mp4','noplaylist':True,
-                  'quiet':True,'no_warnings':True,'socket_timeout':20,'retries':2,'progress_hooks':[hook],
-                  'writeinfojson':True}
-            with yt_dlp.YoutubeDL(opts) as ydl:info=ydl.extract_info(p.url,download=True)
-            p=get_project(pid);p.title=info.get('title',p.title);p.duration=info.get('duration',0)
-            p.metadata={'description':info.get('description',''),'channel':info.get('channel',''),'thumbnail':info.get('thumbnail','')}
-            if not media.exists():
-                source=next((f for f in folder.iterdir() if f.suffix in ['.mp4','.mkv','.webm']),None)
-                if source:source.rename(media)
-            save_project(p)
-        update('소리를 준비하는 중',.12)
-        if media.exists():
-            subprocess.run(['ffmpeg','-nostdin','-hide_banner','-loglevel','error','-y','-i',str(media),'-vn','-ac','1','-ar','16000',str(audio)],check=True,timeout=300,capture_output=True)
-            subprocess.run(['ffmpeg','-nostdin','-hide_banner','-loglevel','error','-y','-ss','10','-i',str(media),'-frames:v','1',str(folder/'poster.jpg')],timeout=60,capture_output=True)
-        import soundfile as sf
-        import librosa
-        y,sr=sf.read(audio,dtype='float32')
-        if y.ndim>1:y=y.mean(axis=1)
-        if sr!=16000:y=librosa.resample(y,orig_sr=sr,target_sr=16000);sr=16000
-        duration=len(y)/sr
-        if duration<1:raise ValueError('분석할 연주 구간이 너무 짧습니다.')
-        update('기타 음표를 듣는 중 · 첫 실행은 모델을 준비합니다',.18)
-        # Transcription takes most of the analysis time, so it gets most of the progress bar.
-        notes,device=transcribe_audio(y,sr,lambda f:update('기타 음표를 듣는 중',.18+.67*f),event.is_set)
-        if not notes:raise ValueError('기타 음표를 찾지 못했습니다. 연주가 잘 들리는 영상을 사용해 주세요.')
-        update('박자와 마디를 정리하는 중',.86)
-        env=librosa.onset.onset_strength(y=y,sr=sr,hop_length=256)
-        tempo,beats=librosa.beat.beat_track(onset_envelope=env,sr=sr,hop_length=256,trim=False)
-        tempo=float(np.clip(np.asarray(tempo).reshape(-1)[0],30,240))
-        beat_times=librosa.frames_to_time(beats,sr=sr,hop_length=256)
-        p=get_project(pid);p.notes=notes;p.duration=duration;p.tempo=tempo
-        p.bars=build_bars(notes,duration,tempo,beat_times)
-        tuning,capos,line=metadata_settings(p.metadata.get('description',''))
-        # A description that names the tuning but no capo means no capo. Guessing it from the
-        # pitch range instead picked capos the player never used (capo 4 on a baritone song).
-        capo=capos[0] if capos else 0 if tuning is not None else None
-        p.tuning,p.capo=choose_settings(notes,tuning,capo)
-        p.metadata['settings_source']='description' if tuning is not None else 'audio-inference'
-        p.metadata['tuning_source']='description' if tuning is not None else 'audio-inference'
-        p.metadata['capo_source']='description' if capo is not None else 'audio-inference'
-        settings_conflict=tuning is not None and p.tuning!=tuning
-        if settings_conflict:
-            p.metadata['settings_source']='description-conflict'
-            p.metadata['tuning_source']='audio-inference'
-        p.metadata['settings_text']=line
-        p.warnings=['줄·프렛 및 특수 주법은 추정 결과입니다. 검토 표시를 확인해 주세요.', '박자·마디 시작은 자동 추정입니다. 루바토와 못갖춘마디는 보정이 필요할 수 있습니다.']
-        if not line:p.warnings.append('카포·튜닝을 확정할 설명 정보가 없어 음역으로 추정했습니다. 설정을 확인해 주세요.')
-        elif tuning is None:p.warnings.append(f'설명의 튜닝 표기를 읽지 못해 음역으로 추정했습니다({line.strip()[:60]}). 설정을 확인해 주세요.')
-        elif not capos:p.warnings.append('설명에 카포 표기가 없어 카포 없이 연주한 것으로 계산했습니다. 영상에 카포가 보이면 설정을 바꿔 주세요.')
-        if settings_conflict:p.warnings.append('영상 설명의 튜닝으로 연주할 수 없는 저음이 반복되어 다른 튜닝을 제안했습니다. 원음과 비교해 설정을 확인해 주세요.')
-        if len(capos)>1:p.warnings.append(f'설명에 카포 {", ".join(map(str,capos))}프렛이 있습니다. 구간별 카포 변경을 확인해 주세요.')
-        update('운지와 연주 기법을 정리하는 중',.9)
-        stats=assign_fingering(p)
-        suggest_techniques(p,y,sr)
-        p.warnings.append('특수 주법 자동 표기는 실험적입니다. 원본 연주와 비교해 수정해 주세요.')
-        p.warnings.append('파일의 리듬은 64분음표 단위까지 표현합니다. 같은 줄의 잔향은 다음 음이 시작할 때 끝나도록 정리합니다.')
-        p.metrics={'audio_model':'GAPS paper checkpoint (2024)','device':device,**stats,
-                   'accuracy_verified':False,'note_count':len(p.notes)}
-        if stats['unassigned']:p.warnings.append(f'{stats["unassigned"]}개 음의 운지가 미정입니다. 내보내기 전에 수정해 주세요.')
-        if event.is_set():raise InterruptedError('분석을 취소했습니다.')
-        p.analysis_seconds=round(time.monotonic()-started,2);p.status='ready';p.stage='채보 초안 준비 완료';p.progress=1
-        save_project(p)
-        (folder/'analysis-report.json').write_text(json.dumps({'seconds':p.analysis_seconds,**p.metrics},ensure_ascii=False,indent=2))
+    try:(_transcribe if transcribe else _prepare)(pid,folder,update,event)
     except InterruptedError:
         p=get_project(pid);p.status='cancelled';p.stage='분석 취소';save_project(p)
     except Exception as exc:

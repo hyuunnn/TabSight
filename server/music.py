@@ -114,6 +114,11 @@ def _pitch_name(midi):
     return ['C','C♯','D','D♯','E','F','F♯','G','G♯','A','A♯','B'][midi % 12] + str(midi//12 - 1)
 
 
+def tuning_name(tuning):
+    """Preset name, or the open strings from the 6th string for a custom tuning."""
+    return next((name for name, t in TUNINGS.items() if t == tuning), ' '.join(_pitch_name(m) for m in tuning))
+
+
 def unplayable_reason(p: Project, out_of_range, crowded):
     """Say why notes cannot be placed, in terms a player can act on (string, octave, capo)."""
     parts = []

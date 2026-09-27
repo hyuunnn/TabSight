@@ -26,8 +26,8 @@ YouTube 핑거스타일 기타 연주를 **로컬 AI로 채보**하고, 초안�
       <img src="docs/images/note-editor.png" alt="채보 다듬기 패널. 검토할 음 목록과 음표 편집기가 보인다.">
     </td>
     <td width="50%" valign="top">
-      <b>튜닝·카포 보정</b><br>
-      원래 음높이를 유지한 채 운지를 다시 계산합니다.<br><br>
+      <b>튜닝·카포 확인과 보정</b><br>
+      채보 전에 영상 설명에서 읽은 튜닝·카포를 확인하고, 없으면 직접 입력합니다. 나중에 바꿔도 원래 음높이를 유지한 채 운지를 다시 계산합니다.<br><br>
       <img src="docs/images/tuning-capo.png" alt="튜닝·카포 패널. Standard 튜닝과 카포 0이 선택되어 있다.">
     </td>
   </tr>

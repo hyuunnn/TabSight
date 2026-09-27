@@ -92,10 +92,32 @@ def retry(pid:str):
     p.status='queued';p.stage='대기 중';p.progress=0;p.error='';save_project(p);pipeline.submit(pid);return p
 
 
-class Revoice(BaseModel):
+class Settings(BaseModel):
     tuning:list[int]=Field(min_length=6,max_length=6)
     capo:int=Field(ge=0,le=12)
     capo_segments:list[CapoSegment]=Field(default_factory=list)
+
+
+@app.post('/api/projects/{pid}/start')
+def start(pid:str,body:Settings):
+    """Transcribe with the tuning and capo the player checked against the video."""
+    p=project(pid)
+    if p.status!='awaiting_settings':raise HTTPException(409,'튜닝·카포를 확인하는 단계가 아닙니다.')
+    p.tuning=body.tuning;p.capo=body.capo;p.capo_segments=body.capo_segments
+    try:Project.model_validate(p.model_dump())
+    except ValueError as e:raise HTTPException(422,str(e))
+    detected=p.metadata.get('detected_settings') or {}
+    capos=detected.get('capos') or []
+    described_capo=capos[0] if capos else 0 if detected.get('tuning') else None
+    p.metadata.update(settings_confirmed=True,
+        tuning_source='description' if body.tuning==detected.get('tuning') else 'manual',
+        capo_source='description' if body.capo==described_capo and not body.capo_segments else 'manual')
+    p.status='queued';p.stage='대기 중';p.progress=.15;p.error=''
+    save_project(p);pipeline.submit(pid,transcribe=True)
+    return p
+
+
+class Revoice(Settings):
     # The screen shows which notes a setting cannot place before the user applies it. Those
     # notes are kept at their pitch without a string, as they are after a tricky analysis.
     allow_unplayable:bool=False
