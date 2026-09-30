@@ -1,6 +1,6 @@
 # 채보 알고리즘 상세
 
-기준: 2026-09-28 구현. [README](../README.md) · [전체 처리 과정](architecture.md) · [연구 자료](research.md) · [검증과 한계](validation.md)
+기준: 2026-09-30 구현. [README](../README.md) · [전체 처리 과정](architecture.md) · [연구 자료](research.md) · [검증과 한계](validation.md)
 
 현재 시스템은 오디오 AI로 음표를 추론하고, 기타의 물리적 제약으로 운지를 선택한다. 영상은 원본 재생에만 쓰고 채보 계산에는 넣지 않는다(6절). 사람이 만든 악보 파일이 있으면 채보하지 않고 그 악보를 녹음에 맞춘다(10절). 여기의 수치와 규칙은 현재 코드의 설정이며, 학습으로 최적화하거나 정확도 확률로 보정한 값은 아니다.
 
@@ -58,7 +58,7 @@ MPS를 사용할 수 있으면 Apple GPU로 실행한다. 해당 장치에서 �
 
 ### 설명 정보
 
-영상 설명에서 `tuning:` 또는 `tune=` 형태가 있는 첫 줄을 찾는다. 그 줄에서 알려진 튜닝 이름, `Eb standard`·`D Standard`처럼 음이름을 붙인 Standard, `Drop C#`처럼 6번 줄 음을 적은 Drop 튜닝, 또는 `ADGCEA`, `D A D G A D`, `Eb Ab Db Gb Bb Eb` 같은 6개 음이름을 읽는다. E 기준 이름(Standard, Drop D, DADGAD, Open D·G·C)에 `half step down`·`whole step down`이 붙으면 모든 줄을 그만큼 내린다. `Open Dm`, `Open C6`처럼 목록에 없는 변형은 비슷한 이름으로 채우지 않고 비워 둔다. 음이름에는 옥타브가 없으므로 각 줄의 Standard 음높이에서 8반음 아래부터 3반음 위 사이의 옥타브로 정한다. `Nashville`이 있으면 일반 기타는 6~3번 줄, 바리톤은 4·3번 줄을 한 옥타브 올린다. 카포는 같은 줄의 `capo 2`, `2nd fret capo`, `capo on the 2nd fret`, `capo at fret 2`, `capo - 2` 같은 표현을 먼저 보고, 없으면 `capo`가 들어간 다른 줄에서 찾는다. `G7th capo`, `Shubb C1`처럼 글자에 붙은 숫자는 카포 제품명으로 보고 읽지 않는다. 설명 전체를 이해하는 언어 모델은 사용하지 않으므로 임의의 설명 형식은 놓칠 수 있다. 이 형식은 Sungha Jung 채널의 설명을 기준으로 만들었다. `Tuning - DADGAD`, 제목의 `(Drop D)`, 한국어·일본어 표기나 설명에 정보가 없는 영상(예: Osamuraisan)은 읽지 못하며, 그때는 확인 화면에서 직접 입력한다.
+영상 설명에서 `tuning:` 또는 `tune=` 형태가 있는 첫 줄을 찾는다. 그 줄에서 알려진 튜닝 이름, `Eb standard`·`D Standard`처럼 음이름을 붙인 Standard, `Drop C#`처럼 6번 줄 음을 적은 Drop 튜닝, 또는 `ADGCEA`, `D A D G A D`, `Eb Ab Db Gb Bb Eb` 같은 6개 음이름을 읽는다. E 기준 이름(Standard, Drop D, DADGAD, Open D·G·C)에 `half step down`·`whole step down`이 붙으면 모든 줄을 그만큼 내린다. `Open Dm`, `Open C6`처럼 목록에 없는 변형은 비슷한 이름으로 채우지 않고 비워 둔다. `standard` 앞의 대문자 한 글자만 음이름으로 보므로, `a standard tuning`의 관사는 무시하지만 문장 첫머리의 `A standard tuning`은 A standard로 읽는다. 음이름에는 옥타브가 없으므로 각 줄의 Standard 음높이에서 8반음 아래부터 3반음 위 사이의 옥타브로 정한다. `Nashville`이 있으면 일반 기타는 6~3번 줄, 바리톤은 4·3번 줄을 한 옥타브 올린다. 카포는 같은 줄의 `capo 2`, `2nd fret capo`, `capo on the 2nd fret`, `capo at fret 2`, `capo - 2` 같은 표현을 먼저 보고, 없으면 `capo`가 들어간 다른 줄에서 찾는다. `G7th capo`, `Shubb C1`처럼 글자에 붙은 숫자는 카포 제품명으로 보고 읽지 않는다. 설명 전체를 이해하는 언어 모델은 사용하지 않으므로 임의의 설명 형식은 놓칠 수 있다. 이 형식은 Sungha Jung 채널의 설명을 기준으로 만들었다. `Tuning - DADGAD`, 제목의 `(Drop D)`, 한국어·일본어 표기나 설명에 정보가 없는 영상(예: Osamuraisan)은 읽지 못하며, 그때는 확인 화면에서 직접 입력한다.
 
 설명에 튜닝은 있고 카포가 없으면 카포 0으로 채운다. 여러 카포가 발견되면 숫자가 가장 작은 값을 채우고 구간별 카포를 추가하라고 안내한다. 변경 시각은 자동으로 알 수 없으므로 사용자가 영상을 그 시점으로 옮겨 구간별 카포를 지정한다.
 
@@ -195,7 +195,8 @@ local = 0.06 × fret + 0.12 × abs(max(1, fret) - previous_position)
 3. 같은 물리적 줄의 다음 음이 시작하면 이전 음의 끝을 출력용으로 줄인다. 프로젝트의 원래 `end` 값은 보존한다.
 4. 마디 안의 상대 시간을 tick으로 변환하고 60tick 단위로 반올림한다. 4분음표 960tick, 온음표 3840tick이므로 60tick은 64분음표다. 120 BPM이면 약 31.25ms에 해당한다.
 5. 시작·끝 경계마다 구간을 나누고 음가·쉼표·화음·타이로 구성한다. 각 트랙의 활성 성부는 하나다. 멜로디·베이스를 서로 다른 성부로 추론하지 않는다.
-6. PyGuitarPro로 GP5 5.1을 쓴다. `.gp` 요청은 GP5를 alphaTab으로 읽고 `Gp7Exporter`로 다시 쓴다.
+6. 한 음이 붙임줄로 나뉘면 해머온·풀오프·슬라이드는 마지막 조각에 표시한다. 첫 조각에 두면 다음 음이 아니라 자기 붙임줄로 이어지기 때문이다. 벤딩은 반음 올리는 벤딩으로 쓰고, 붙임줄 조각에서는 올린 음높이를 유지한다.
+7. PyGuitarPro로 GP5 5.1을 쓴다. `.gp` 요청은 GP5를 alphaTab으로 읽고 `Gp7Exporter`로 다시 쓴다.
 
 템포는 GP에 기록할 때 정수 BPM으로 반올림한다. 셋잇단음표를 별도로 복원하지 않으며, 세밀한 타이와 짧은 음가가 많이 생길 수 있다. 원본 시각 보존과 보기 좋은 리듬 표기는 서로 다른 과제로 남아 있다.
 
