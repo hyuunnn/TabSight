@@ -148,6 +148,16 @@ def assign_fingering(p: Project, *, strict=False):
             groups[-1].append(note)
     previous_position = 3.
     out_of_range, crowded = [], []
+
+    def unplace(n, missing):
+        # Kept at its pitch without a string. A harmonic without its touch fret would fail every
+        # save, so it becomes a plain note with the harmonic left as a suggestion to review.
+        if n.technique == 'harmonic':
+            n.technique = 'normal'
+            n.evidence = [e for e in n.evidence if e != 'harmonic-candidate'] + ['harmonic-candidate']
+        n.string, n.fret, n.confidence = 0, 0, .1
+        missing.append(n)
+
     for group in groups:
         # Missing notes are kept explicitly unassigned instead of changing pitch.
         states = [(0., [], set())]
@@ -161,8 +171,7 @@ def assign_fingering(p: Project, *, strict=False):
                 n.evidence = [e for e in n.evidence if e != 'harmonic-candidate'] + ['harmonic-candidate']
                 opts = candidates(n.midi, p.tuning, capo)
             if not opts:
-                out_of_range.append(n)
-                n.string, n.fret, n.confidence = 0,0,.1
+                unplace(n, out_of_range)
                 continue
             next_states = []
             for cost, placements, used in states:
@@ -180,8 +189,7 @@ def assign_fingering(p: Project, *, strict=False):
                 states = sorted(next_states,key=lambda s:s[0])[:24]
             else:
                 # More simultaneous notes than physically available strings: preserve and flag.
-                crowded.append(n)
-                n.string,n.fret,n.confidence = 0,0,.1
+                unplace(n, crowded)
         if states:
             placements = states[0][1]
             for n,string,fret in placements:

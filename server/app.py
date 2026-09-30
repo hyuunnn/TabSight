@@ -64,7 +64,8 @@ def update(pid:str,body:Project):
     for field in ['url','video_id','source','status','created_at','analysis_seconds','metadata','metrics','sync']:
         setattr(body,field,getattr(current,field))
     for n in body.notes:
-        if n.technique=='harmonic' and n.fret not in HARMONICS:raise HTTPException(422,'자연 하모닉스의 터치 프렛은 3, 4, 5, 7, 9, 12를 지원합니다.')
+        # An unplaced harmonic has no touch fret yet; it is checked once it gets a string.
+        if n.string and n.technique=='harmonic' and n.fret not in HARMONICS:raise HTTPException(422,'자연 하모닉스의 터치 프렛은 3, 4, 5, 7, 9, 12를 지원합니다.')
         if n.string and n.technique!='percussion' and sounding_pitch(n,body)!=n.midi:raise HTTPException(422,'음높이와 운지가 일치하지 않습니다. 줄·프렛 또는 카포를 확인해 주세요.')
     if any(b.start<a.end-.02 for a,b in zip(body.bars,body.bars[1:])):raise HTTPException(422,'마디 구간이 겹칩니다.')
     try:return save_project(body,edit=True,expected_revision=body.revision)
@@ -229,6 +230,12 @@ async def import_file(file:UploadFile=File(...)):
         p=Project(id=pid,source='score',status='ready',stage='가져온 악보',progress=1,**json.loads(result.stdout))
         p.warnings=['가져온 기존 악보입니다. AI 채보 결과가 아닙니다.']
         if p.metadata.get('track_count',1)>1:p.warnings.append('여러 트랙 중 첫 기타 트랙을 편집용으로 가져왔습니다. 원본 파일은 별도로 보관됩니다.')
+        # The editor knows natural harmonics at 3, 4, 5, 7, 9 and 12 only. Any other harmonic (artificial,
+        # tapped, another touch fret) would fail every save, so it keeps its fret as a plain note to review.
+        other=[n for n in p.notes if n.string and n.technique=='harmonic' and (n.fret not in HARMONICS or sounding_pitch(n,p)!=n.midi)]
+        for n in other:
+            n.technique='normal';n.midi=sounding_pitch(n,p);n.evidence=[*n.evidence,'harmonic-candidate'];n.reviewed=False;n.confidence=min(n.confidence,.3)
+        if other:p.warnings.append(f'이 앱은 3, 4, 5, 7, 9, 12프렛의 자연 하모닉스만 표현합니다. 다른 하모닉스 {len(other)}개는 누르는 프렛의 일반 음으로 가져와 검토할 음에 올렸습니다.')
         save_project(p);return p
     p=Project(id=pid,title=Path(file.filename or '연주').stem,source='file',metadata={'audio_only':suffix in ['.wav','.mp3','.m4a']});save_project(p)
     if suffix in ['.wav','.mp3','.m4a']:

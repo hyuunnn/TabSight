@@ -27,7 +27,7 @@ def gp5_bytes(p: Project, preview=False):
     for n in p.notes:
         if n.string and n.technique!='percussion' and sounding_pitch(n,p)!=n.midi:
             raise ValueError('음높이와 운지가 일치하지 않는 음표가 있습니다. 줄·프렛을 확인해 주세요.')
-        if n.technique=='harmonic' and n.fret not in HARMONICS:
+        if n.string and n.technique=='harmonic' and n.fret not in HARMONICS:
             raise ValueError('자연 하모닉스는 3, 4, 5, 7, 9, 12프렛을 지원합니다.')
     unresolved=[n for n in p.notes if not n.string and n.technique!='percussion']
     if unresolved and not preview:
