@@ -174,9 +174,16 @@ def revoice(pid:str,body:Revoice):
     p=project(pid)
     if p.status!='ready':raise HTTPException(409,'분석이 끝난 뒤 수정해 주세요.')
     if p.sync:raise HTTPException(409,'올린 악보로 맞춘 곡은 튜닝·카포를 바꿀 수 없습니다.')
+    # Where each note is played on the neck, counting frets from the nut. A review covers that place, so a
+    # note that has to move or loses its string goes back on the review list; under a moved capo, a note
+    # still played at the same place keeps its check.
+    def place(n):return (n.string,n.fret+p.capo_at(n.start) if n.string else 0,n.technique)
+    before={n.id:place(n) for n in p.notes}
     rev=p.revision;p.tuning=body.tuning;p.capo=body.capo;p.capo_segments=body.capo_segments
     try:
         Project.model_validate(p.model_dump());assign_fingering(p,strict=not body.allow_unplayable)
+        for n in p.notes:
+            if place(n)!=before[n.id]:n.reviewed=False
         return save_project(p,edit=True,expected_revision=rev)
     except ValueError as e:raise HTTPException(422,str(e))
 
