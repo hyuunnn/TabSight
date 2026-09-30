@@ -22,6 +22,23 @@ _NOTE = r'[A-G](?:#|b|♯|♭)?'
 # Six note names, written together (ADGCEA, EbAbDbGbBbEb) or separated (D A D G A D, D-A-D-G-A-D).
 _LETTER_TUNING = re.compile(rf'(?<![A-Za-z0-9#♯♭]){_NOTE}(?:[ ,/-]*{_NOTE}){{5}}(?![A-Za-z0-9#♯♭])')
 _PITCH_CLASS = {'C':0, 'D':2, 'E':4, 'F':5, 'G':7, 'A':9, 'B':11}
+# 'Eb standard', 'D Standard': standard tuning moved to that note. The note is a capital letter on its own,
+# so the article in 'a standard tuning' is not read as A.
+_NOTE_STANDARD = re.compile(rf'(?<![A-Za-z0-9#♯♭])({_NOTE})\s*(?i:standard)')
+# 'Drop C#', 'Drop Db': the 6th string at that note, a whole step below the 5th, the rest moved with it.
+_DROP = re.compile(rf'(?i:drop)[\s-]*({_NOTE})(?![A-Za-z0-9#♯♭])')
+# 'half step down', 'down a whole step': how far a tuning named in E terms is lowered.
+_STEPS_DOWN = ((re.compile(r'(?:half|1/2|semi)[\s-]*(?:step|tone)[\s-]*down|down\s*(?:a\s*)?(?:half|1/2)[\s-]*step', re.I), 1),
+               (re.compile(r'(?:whole|full)[\s-]*(?:step|tone)[\s-]*down|down\s*(?:a\s*)?(?:whole|full)[\s-]*step', re.I), 2))
+
+
+def _pitch_class(name):
+    return (_PITCH_CLASS[name[0]] + (name[1:] in ('#', '♯')) - (name[1:] in ('b', '♭'))) % 12
+
+
+def _from_e(pc):
+    """Semitones from E to a pitch class, 8 below to 3 above, the reach note names are read with."""
+    return (pc - 4 + 8) % 12 - 8
 
 
 def _letter_tuning(line):
@@ -36,27 +53,47 @@ def _letter_tuning(line):
         return None
     tuning = []
     for name, standard in zip(re.findall(_NOTE, match.group()), STANDARD):
-        pc = (_PITCH_CLASS[name[0]] + (name[1:] in ('#', '♯')) - (name[1:] in ('b', '♭'))) % 12
         lowest = standard - 8
-        tuning.append(lowest + (pc - lowest) % 12)
+        tuning.append(lowest + (_pitch_class(name) - lowest) % 12)
     return tuning
 
 
+def _named_tuning(line, low):
+    """A tuning written by name.
+
+    '<note> standard' and 'Drop <note>' name their pitch. A name in E terms (Standard, Drop D, DADGAD,
+    Open D/G/C) can come with 'half step down' or 'whole step down', which lowers every string.
+    """
+    match = _NOTE_STANDARD.search(line)
+    if match:
+        return [n + _from_e(_pitch_class(match.group(1))) for n in STANDARD]
+    down = next((steps for pattern, steps in _STEPS_DOWN if pattern.search(line)), 0)
+    match = _DROP.search(line)
+    if match:
+        pc = _pitch_class(match.group(1))
+        tuning = [n + _from_e(pc + 2) for n in STANDARD]
+        tuning[0] -= 2
+        # 'Drop C#' already names the lowered pitch; only 'Drop D' is written in E terms.
+        return [n - down for n in tuning] if pc == 2 else tuning
+    for name in ['Drop D', 'DADGAD', 'Open D', 'Open G', 'Open C', 'Standard']:
+        # A whole name, so 'Drop Db', 'Open Dm', 'Open D minor' and 'Open C6' are not read as another tuning.
+        if re.search(rf'(?<![a-z0-9]){name.lower()}(?![a-z0-9#♯♭])(?!\s*(?:minor|min|maj|sus|add)\b)', low):
+            return [n - down for n in TUNINGS[name]]
+    return [n - down for n in STANDARD] if down else None
+
+
 def _capo_numbers(text):
-    capos = [int(v) for v in re.findall(r'(\d{1,2})\s*(?:th\s*|nd\s*|rd\s*|st\s*)?capo', text, re.I)]
-    capos += [int(v) for v in re.findall(r'capo\s*(?:on\s*)?(?:[:=]\s*)?(\d{1,2})', text, re.I)]
+    """Frets written with 'capo': '2 capo', '2nd fret capo', 'capo 2', 'Capo: 2', 'capo on the 2nd fret',
+    'capo at fret 2', 'capo - 2'. A number glued to letters ('G7th capo', 'Shubb C1 capo') names a capo model."""
+    capos = [int(v) for v in re.findall(r'(?<![A-Za-z0-9])(\d{1,2})\s*(?:st|nd|rd|th)?\s*(?:fret\s*)?capo', text, re.I)]
+    capos += [int(v) for v in re.findall(r'capo(?:\s*(?:[:=@(\-–]|(?:on|at|the|fret|is)\b))*\s*(\d{1,2})(?!\d)', text, re.I)]
     return capos
 
 
 def metadata_settings(description: str):
     line = next((s for s in description.splitlines() if re.search(r'tun(?:ing|e)\s*[:=]', s, re.I)), '')
     low = line.lower().replace('-', ' ')
-    tuning = _letter_tuning(line)
-    if tuning is None:
-        for name in ['Half step down', 'Whole step down', 'Drop D', 'DADGAD', 'Open D', 'Open G', 'Open C', 'Standard']:
-            if name.lower() in low:
-                tuning = TUNINGS[name].copy()
-                break
+    tuning = _letter_tuning(line) or _named_tuning(line, low)
     if 'nashville' in low or 'high strung' in low:
         # Nashville strings sound an octave above their note names. On a normal guitar that is
         # strings 6-3 (E3 A3 D4 G4 B3 E4); a baritone raises only strings 4 and 3 (A1 D2 G3 C4 E3 A3).
