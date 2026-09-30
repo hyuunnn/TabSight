@@ -98,7 +98,8 @@ def gp5_bytes(p: Project, preview=False):
                             effect.harmonic=g.NaturalHarmonic()
                         if n.technique=='mute':effect.palmMute=True
                         if n.technique=='vibrato':effect.vibrato=True
-                        if n.technique=='bend':effect.bend=g.BendEffect(type=g.BendType.bend,value=50,points=[g.BendPoint(0,0),g.BendPoint(12,50)])
+                        # Bend points count quarter tones: up a semitone, then held on the note's tied segments.
+                        if n.technique=='bend':effect.bend=g.BendEffect(type=g.BendType.bend,value=50,points=[g.BendPoint(0,2 if tied else 0),g.BendPoint(12,2)])
                         if n.technique=='slap':beat.effect.slapEffect=g.SlapEffect.slapping
                         if not tied and not n.reviewed and 'harmonic-candidate' in n.evidence:beat.text='Harmonic?'
                         value=n.midi if perc else n.fret
