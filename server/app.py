@@ -126,7 +126,7 @@ SCORE_TYPES=['.gp','.gpx','.gp5','.gp4','.gp3']
 
 
 @app.post('/api/projects/{pid}/score-file')
-async def score_file(pid:str,file:UploadFile=File(...)):
+def score_file(pid:str,file:UploadFile=File(...)):
     """Time the player's own Guitar Pro file to the media instead of transcribing.
 
     The file is read here so a bad one is refused at once; the timing runs as a job.
@@ -135,7 +135,7 @@ async def score_file(pid:str,file:UploadFile=File(...)):
     if p.status!='awaiting_settings':raise HTTPException(409,'튜닝·카포를 확인하는 단계에서 악보를 올려 주세요.')
     suffix=Path(file.filename or '').suffix.lower()
     if suffix not in SCORE_TYPES:raise HTTPException(422,'Guitar Pro 악보 파일(.gp, .gpx, .gp5, .gp4, .gp3)을 선택해 주세요.')
-    data=await file.read(20*1024*1024+1)
+    data=file.file.read(20*1024*1024+1)
     if len(data)>20*1024*1024:raise HTTPException(413,'악보 파일은 20MB 이하로 선택해 주세요.')
     folder=project_dir(pid)
     with tempfile.TemporaryDirectory(prefix='upload-',dir=folder) as work:
@@ -218,15 +218,17 @@ def export(pid:str,fmt:str,preview:bool=False):
     return Response(data,media_type='application/octet-stream',headers={'Content-Disposition':f'attachment; filename="tabsight.{fmt}"','Cache-Control':'no-store'})
 
 
+# A plain def runs in FastAPI's thread pool. The conversion here can take minutes and must not stall the
+# event loop, which also answers progress polling and streams media. score_file is a plain def for the same reason.
 @app.post('/api/import')
-async def import_file(file:UploadFile=File(...)):
+def import_file(file:UploadFile=File(...)):
     suffix=Path(file.filename or '').suffix.lower()
     if suffix not in ['.gp','.gp5','.gp4','.gp3','.mp4','.mov','.mkv','.webm','.wav','.mp3','.m4a']:
         raise HTTPException(422,'Guitar Pro 악보 또는 영상·음성 파일을 선택해 주세요.')
     pid=uuid.uuid4().hex;folder=project_dir(pid);path=folder/('import'+suffix)
     total=0
     with path.open('wb') as out:
-        while chunk:=await file.read(1024*1024):
+        while chunk:=file.file.read(1024*1024):
             total+=len(chunk)
             if total>1024*1024*1024:
                 out.close();path.unlink(missing_ok=True);raise HTTPException(413,'파일은 1GB 이하로 선택해 주세요.')
