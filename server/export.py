@@ -57,6 +57,9 @@ def gp5_bytes(p: Project, preview=False):
         song.tracks.append(track)
     start_tick=960
     previous_active=[set() for _ in track_specs]
+    # A hammer-on, pull-off or slide leaves from the last written segment of its note. Put on an
+    # earlier segment, it would reach the note's own tied continuation instead of the next note.
+    legato={}
     # A rearticulation stops the previous note on that physical string. Keeping
     # the old span active would incorrectly resurrect it after the new note ends.
     ends={n.id:n.end for n in p.notes}
@@ -91,8 +94,6 @@ def gp5_bytes(p: Project, preview=False):
                     for n in active.values():
                         effect=g.NoteEffect()
                         tied=n.id in previous_active[ti]
-                        if not tied and n.technique in ['hammer','pull']:effect.hammer=True
-                        if not tied and n.technique=='slide':effect.slides=[g.SlideType.shiftSlideTo]
                         if n.technique=='harmonic':
                             effect.harmonic=g.NaturalHarmonic()
                         if n.technique=='mute':effect.palmMute=True
@@ -103,11 +104,15 @@ def gp5_bytes(p: Project, preview=False):
                         value=n.midi if perc else n.fret
                         note=g.Note(beat,value=value,string=1 if perc else n.string,velocity=n.velocity,effect=effect,type=g.NoteType.tie if tied else g.NoteType.normal)
                         beat.notes.append(note)
+                        if n.technique in ['hammer','pull','slide']:legato[ti,n.id]=(n.technique,note)
                     voice.beats.append(beat)
                     previous_active[ti]={n.id for n in active.values()}
                     cursor+=amount
             # Empty second voice is intentional: no duplicate playback.
         start_tick+=length
+    for technique,note in legato.values():
+        if technique=='slide':note.effect.slides=[g.SlideType.shiftSlideTo]
+        else:note.effect.hammer=True
     if not p.bars:
         raise ValueError('내보낼 악보가 없습니다.')
     out=io.BytesIO()
