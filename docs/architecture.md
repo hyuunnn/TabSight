@@ -1,6 +1,6 @@
 # 구조와 동작 과정
 
-기준: 2026-09-30 구현. [README](../README.md) · [알고리즘](algorithms.md) · [개발 안내](development.md)
+기준: 2026-10-01 구현. [README](../README.md) · [알고리즘](algorithms.md) · [개발 안내](development.md)
 
 TabSight는 한 사람이 자신의 Mac에서 사용하는 웹앱이다. 브라우저는 편집과 재생을 담당하고, 로컬 Python 서버는 모델 추론·악보 싱크·프로젝트 저장·파일 생성을 담당한다. 현재 계정, 클라우드 작업 큐, 여러 사용자를 위한 서비스 운영 기능은 없다.
 

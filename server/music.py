@@ -163,8 +163,9 @@ def assign_fingering(p: Project, *, strict=False):
     out_of_range, crowded = [], []
 
     def unplace(n, missing):
-        # Kept at its pitch without a string. A harmonic without its touch fret would fail every
-        # save, so it becomes a plain note with the harmonic left as a suggestion to review.
+        # Kept at its pitch without a string. A harmonic becomes a plain note with the harmonic left as a
+        # suggestion to review: given a string in the editor it would keep fret 0, which is no touch fret,
+        # so that save would be refused.
         if n.technique == 'harmonic':
             n.technique = 'normal'
             n.evidence = [e for e in n.evidence if e != 'harmonic-candidate'] + ['harmonic-candidate']
