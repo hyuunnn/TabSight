@@ -135,14 +135,19 @@ def test_retuning_turns_a_lost_harmonic_into_a_fretted_note():
     assert n.technique=='normal' and 'harmonic-candidate' in n.evidence and sounding_pitch(n,p)==83
 
 def test_unplaced_harmonic_does_not_block_save_or_preview():
-    # B6 is the 3rd-fret harmonic of E4. Half step down has neither that harmonic nor a fret for it.
+    # B6 is the 3rd-fret harmonic of E4. Half step down has neither that harmonic nor a fret for it, so it
+    # stays a harmonic without a string, and tuning back puts it on its harmonic again.
     p=fixture_project(notes=[Note(id='harm',midi=95,start=0,end=.5,string=1,fret=3,technique='harmonic')]);save_project(p)
     r=client.post(f'/api/projects/{p.id}/revoice',json={'tuning':[39,44,49,54,58,63],'capo':0,'allow_unplayable':True})
     n=r.json()['notes'][0]
-    assert n['string']==0 and n['midi']==95 and n['technique']=='normal' and 'harmonic-candidate' in n['evidence']
+    assert n['string']==0 and n['midi']==95 and n['technique']=='harmonic'
     assert client.put(f'/api/projects/{p.id}',json=r.json()).status_code==200
     assert client.get(f'/api/projects/{p.id}/score/gp5?preview=true').status_code==200
     assert '미정' in client.get(f'/api/projects/{p.id}/score/gp5').json()['detail']
+    r=client.post(f'/api/projects/{p.id}/revoice',json={'tuning':p.tuning,'capo':0})
+    n=r.json()['notes'][0]
+    assert (n['string'],n['fret'],n['technique'])==(1,3,'harmonic')
+    assert client.get(f'/api/projects/{p.id}/score/gp5').status_code==200
     # Older code saved such a note as a harmonic without a string; that project must still save and preview.
     q=fixture_project(notes=[Note(id='h',midi=95,start=0,end=.5,technique='harmonic')]);save_project(q)
     assert client.put(f'/api/projects/{q.id}',json=q.model_dump()).status_code==200
