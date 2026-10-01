@@ -82,6 +82,15 @@ def test_legato_leaves_from_the_last_tied_segment_and_imports_back(tmp_path,tech
     path=tmp_path/'legato.gp5';path.write_bytes(data)
     assert {n['fret']:n['technique'] for n in inspect(path)['notes'] if n['string']==1}=={a:technique,b:'normal'}
 
+def test_import_keeps_a_stronger_technique_over_a_tied_legato(tmp_path):
+    # A palm-muted note with a hammer-on on its last tied segment reads as muted, as an untied one does.
+    p=fixture_project(notes=[Note(id='bass',midi=45,start=.5,end=1,string=5,fret=0),
+        Note(id='a',midi=67,start=0,end=1,string=1,fret=3,technique='hammer'),Note(id='b',midi=69,start=1,end=1.5,string=1,fret=5)])
+    song=guitarpro.parse(io.BytesIO(gp5_bytes(p)),encoding='utf-8')
+    next(n for b in song.tracks[0].measures[0].voices[0].beats for n in b.notes if n.string==1).effect.palmMute=True
+    path=tmp_path/'muted.gp5';out=io.BytesIO();guitarpro.write(song,out,version=(5,1,0),encoding='utf-8');path.write_bytes(out.getvalue())
+    assert {n['fret']:n['technique'] for n in inspect(path)['notes'] if n['string']==1}=={3:'mute',5:'normal'}
+
 def test_bend_is_a_semitone_and_held_across_ties():
     # Bend points count quarter tones. A tied segment holds the bent pitch instead of bending again.
     p=fixture_project(notes=[Note(id='bass',midi=45,start=.5,end=1,string=5,fret=0),Note(id='a',midi=64,start=0,end=1,string=2,fret=5,technique='bend')])
@@ -154,16 +163,19 @@ def test_unplaced_harmonic_does_not_block_save_or_preview():
     assert client.get(f'/api/projects/{q.id}/score/gp5?preview=true').status_code==200
 
 def test_import_keeps_unsupported_harmonics_as_fretted_notes_to_review():
-    p=fixture_project(notes=[Note(id=i,midi=76,start=s,end=s+.5,string=1,fret=12,technique='harmonic') for i,s in [('a',0),('b',.5)]])
+    # A natural harmonic at 12 stays. A 16th-fret natural harmonic, and an artificial one at fret 12 (a touch
+    # fret, but not the pitch a natural harmonic there sounds), become fretted notes to review.
+    p=fixture_project(notes=[Note(id=i,midi=76,start=s,end=s+.5,string=1,fret=12,technique='harmonic') for i,s in [('a',0),('b',.5),('c',1)]])
     song=guitarpro.parse(io.BytesIO(gp5_bytes(p)),encoding='utf-8')
-    song.tracks[0].measures[0].voices[0].beats[1].notes[0].value=16  # a 16th-fret natural harmonic
+    beats=[b for b in song.tracks[0].measures[0].voices[0].beats if b.notes]
+    beats[1].notes[0].value=16
+    beats[2].notes[0].effect.harmonic=guitarpro.ArtificialHarmonic(pitch=guitarpro.PitchClass(4),octave=guitarpro.Octave.ottava)
     out=io.BytesIO();guitarpro.write(song,out,version=(5,1,0),encoding='utf-8')
     r=client.post('/api/import',files={'file':('harmonics.gp5',out.getvalue(),'application/octet-stream')})
-    by_fret={n['fret']:n for n in r.json()['notes']}
-    assert by_fret[12]['technique']=='harmonic' and by_fret[12]['midi']==76
-    other=by_fret[16]
-    assert other['technique']=='normal' and other['midi']==80 and not other['reviewed'] and 'harmonic-candidate' in other['evidence']
-    assert any('다른 하모닉스 1개' in w for w in r.json()['warnings'])
+    notes=sorted(r.json()['notes'],key=lambda n:n['start'])
+    assert [(n['fret'],n['midi'],n['technique']) for n in notes]==[(12,76,'harmonic'),(16,80,'normal'),(12,76,'normal')]
+    assert all(not n['reviewed'] and 'harmonic-candidate' in n['evidence'] for n in notes[1:])
+    assert any('다른 하모닉스 2개' in w for w in r.json()['warnings'])
     assert client.put(f"/api/projects/{r.json()['id']}",json=r.json()).status_code==200
 
 def test_revoice_puts_moved_and_unplaced_notes_back_on_the_review_list():
