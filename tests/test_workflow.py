@@ -135,6 +135,22 @@ def test_metadata_reads_note_names_nashville_and_capo_line():
     assert metadata_settings('Tuning: Nashville')[0]==[52,57,62,67,59,64]
     assert metadata_settings('Tuning: Standard\nCapo on 3rd fret')[:2]==([40,45,50,55,59,64],[3])
 
+@pytest.mark.parametrize('text,tuning,capos',[
+    # A name only counts whole, so a variant the presets lack stays empty instead of becoming the preset it starts with.
+    ('Tuning: Drop Db',None,[]),('Tuning: Open Dm',None,[]),('Tuning: Open D minor',None,[]),('Tuning: Open C6',None,[]),
+    ('Tuning: Eb standard',[39,44,49,54,58,63],[]),('Tuning: D Standard',[38,43,48,53,57,62],[]),
+    ('Tuning: a standard tuning',[40,45,50,55,59,64],[]),
+    # Read right before; a wider parser once broke these.
+    ('Tuning: E Standard (half step down)',[39,44,49,54,58,63],[]),('Tuning: Drop D (6th string down a whole step)',[38,45,50,55,59,64],[]),
+    ('Tuning: Drop D (from E standard)',[38,45,50,55,59,64],[]),('Tuning: Drop D Standard',[38,45,50,55,59,64],[]),
+    # A number glued to letters is a capo model, and one next to a colon is a time.
+    ('Tuning: Standard, G7th capo 3',[40,45,50,55,59,64],[3]),('Tuning: Standard, Shubb C1 capo 2',[40,45,50,55,59,64],[2]),
+    ('Tuning: Standard, capo 123',[40,45,50,55,59,64],[]),('Tuning: standard tuning, 0:05 capo 2',[40,45,50,55,59,64],[2]),
+    ('Tuning: Standard\n0:00 capo 2, 1:30 capo 4',[40,45,50,55,59,64],[2,4]),
+])
+def test_metadata_reads_whole_names_and_only_fret_numbers(text,tuning,capos):
+    assert metadata_settings(text)[:2]==(tuning,capos)
+
 def test_described_tuning_without_capo_is_played_without_capo(monkeypatch):
     import numpy as np,soundfile as sf
     p=fixture_project(status='queued',source='file',metadata={'description':'Tuning : ADGCEA (Baritone Nashville Tuning)'});save_project(p)
