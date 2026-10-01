@@ -82,6 +82,11 @@ def test_legato_leaves_from_the_last_tied_segment_and_imports_back(tmp_path,tech
     path=tmp_path/'legato.gp5';path.write_bytes(data)
     assert {n['fret']:n['technique'] for n in inspect(path)['notes'] if n['string']==1}=={a:technique,b:'normal'}
 
+def test_bend_is_a_semitone_and_held_across_ties():
+    # Bend points count quarter tones. A tied segment holds the bent pitch instead of bending again.
+    p=fixture_project(notes=[Note(id='bass',midi=45,start=.5,end=1,string=5,fret=0),Note(id='a',midi=64,start=0,end=1,string=2,fret=5,technique='bend')])
+    assert [x[3] for x in written(gp5_bytes(p),2)]==[[0,2],[2,2]]
+
 def test_capo_segments_and_percussion_tracks():
     p=fixture_project(notes=[Note(id='a',midi=64,start=0,end=1,string=1,fret=0),Note(id='b',midi=66,start=2,end=3,string=1,fret=0),Note(id='hit',midi=37,start=1,end=1.125,technique='percussion')],capo_segments=[CapoSegment(start=2,capo=2)])
     song=guitarpro.parse(io.BytesIO(gp5_bytes(p)),encoding='utf-8')
@@ -128,6 +133,45 @@ def test_retuning_turns_a_lost_harmonic_into_a_fretted_note():
     assert assign_fingering(p,strict=True)['unassigned']==0
     n=p.notes[0]
     assert n.technique=='normal' and 'harmonic-candidate' in n.evidence and sounding_pitch(n,p)==83
+
+def test_unplaced_harmonic_does_not_block_save_or_preview():
+    # B6 is the 3rd-fret harmonic of E4. Half step down has neither that harmonic nor a fret for it.
+    p=fixture_project(notes=[Note(id='harm',midi=95,start=0,end=.5,string=1,fret=3,technique='harmonic')]);save_project(p)
+    r=client.post(f'/api/projects/{p.id}/revoice',json={'tuning':[39,44,49,54,58,63],'capo':0,'allow_unplayable':True})
+    n=r.json()['notes'][0]
+    assert n['string']==0 and n['midi']==95 and n['technique']=='normal' and 'harmonic-candidate' in n['evidence']
+    assert client.put(f'/api/projects/{p.id}',json=r.json()).status_code==200
+    assert client.get(f'/api/projects/{p.id}/score/gp5?preview=true').status_code==200
+    assert '미정' in client.get(f'/api/projects/{p.id}/score/gp5').json()['detail']
+    # Older code saved such a note as a harmonic without a string; that project must still save and preview.
+    q=fixture_project(notes=[Note(id='h',midi=95,start=0,end=.5,technique='harmonic')]);save_project(q)
+    assert client.put(f'/api/projects/{q.id}',json=q.model_dump()).status_code==200
+    assert client.get(f'/api/projects/{q.id}/score/gp5?preview=true').status_code==200
+
+def test_import_keeps_unsupported_harmonics_as_fretted_notes_to_review():
+    p=fixture_project(notes=[Note(id=i,midi=76,start=s,end=s+.5,string=1,fret=12,technique='harmonic') for i,s in [('a',0),('b',.5)]])
+    song=guitarpro.parse(io.BytesIO(gp5_bytes(p)),encoding='utf-8')
+    song.tracks[0].measures[0].voices[0].beats[1].notes[0].value=16  # a 16th-fret natural harmonic
+    out=io.BytesIO();guitarpro.write(song,out,version=(5,1,0),encoding='utf-8')
+    r=client.post('/api/import',files={'file':('harmonics.gp5',out.getvalue(),'application/octet-stream')})
+    by_fret={n['fret']:n for n in r.json()['notes']}
+    assert by_fret[12]['technique']=='harmonic' and by_fret[12]['midi']==76
+    other=by_fret[16]
+    assert other['technique']=='normal' and other['midi']==80 and not other['reviewed'] and 'harmonic-candidate' in other['evidence']
+    assert any('다른 하모닉스 1개' in w for w in r.json()['warnings'])
+    assert client.put(f"/api/projects/{r.json()['id']}",json=r.json()).status_code==200
+
+def test_revoice_puts_moved_and_unplaced_notes_back_on_the_review_list():
+    # Under capo 2 each note has one outcome whatever the fingering costs: E2 cannot be played, open E4
+    # has to leave the 1st string, and the 22nd-fret D6 stays at the same place as fret 20.
+    p=fixture_project(notes=[Note(id='low',midi=40,start=0,end=.5,string=6,fret=0,reviewed=True),
+        Note(id='open',midi=64,start=1,end=1.5,string=1,fret=0,reviewed=True),Note(id='high',midi=86,start=2,end=2.5,string=1,fret=22,reviewed=True)])
+    save_project(p)
+    r=client.post(f'/api/projects/{p.id}/revoice',json={'tuning':p.tuning,'capo':2,'allow_unplayable':True})
+    notes={n['id']:n for n in r.json()['notes']}
+    assert notes['low']['string']==0 and not notes['low']['reviewed']
+    assert notes['open']['string']!=1 and not notes['open']['reviewed']
+    assert (notes['high']['string'],notes['high']['fret'])==(1,20) and notes['high']['reviewed']
 
 def test_youtube_validation_and_job_creation(monkeypatch):
     seen=[];monkeypatch.setattr(pipeline,'submit',lambda pid:seen.append(pid))
