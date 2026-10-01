@@ -22,8 +22,9 @@ _NOTE = r'[A-G](?:#|b|♯|♭)?'
 # Six note names, written together (ADGCEA, EbAbDbGbBbEb) or separated (D A D G A D, D-A-D-G-A-D).
 _LETTER_TUNING = re.compile(rf'(?<![A-Za-z0-9#♯♭]){_NOTE}(?:[ ,/-]*{_NOTE}){{5}}(?![A-Za-z0-9#♯♭])')
 _PITCH_CLASS = {'C':0, 'D':2, 'E':4, 'F':5, 'G':7, 'A':9, 'B':11}
-# 'Eb standard', 'D Standard'. Only a capital letter is a note, so the article in 'a standard tuning' is not.
-_NOTE_STANDARD = re.compile(rf'(?<![A-Za-z0-9#♯♭])({_NOTE})\s*(?i:standard)')
+# The note written right before 'standard' ('Eb standard', 'D-Standard'). Only a capital letter is a note,
+# so the article in 'a standard tuning' is not.
+_NOTE_BEFORE = re.compile(rf'(?<![A-Za-z0-9#♯♭])({_NOTE})[\s-]*$')
 
 
 def _pitch_class(name):
@@ -48,10 +49,10 @@ def _letter_tuning(line):
 
 
 def _capo_numbers(text):
-    # A number glued to letters names a capo model ('G7th capo', 'Shubb C1 capo'), and one next to a
-    # colon is a time ('0:05 capo 2', 'capo 1:30'); neither is a fret.
+    # A number glued to letters names a capo model ('G7th capo', 'Shubb C1 capo'), and one inside a time
+    # ('0:05 capo 2', 'capo 1:30') is not a fret either. 'Capo 2: verse' still reads 2.
     capos = [int(v) for v in re.findall(r'(?<![A-Za-z0-9:])(\d{1,2})\s*(?:th\s*|nd\s*|rd\s*|st\s*)?capo', text, re.I)]
-    capos += [int(v) for v in re.findall(r'capo\s*(?:on\s*)?(?:[:=]\s*)?(\d{1,2})(?![\d:])', text, re.I)]
+    capos += [int(v) for v in re.findall(r'capo\s*(?:on\s*)?(?:[:=]\s*)?(\d{1,2})(?!\d|:\d)', text, re.I)]
     return capos
 
 
@@ -61,13 +62,15 @@ def metadata_settings(description: str):
     tuning = _letter_tuning(line)
     if tuning is None:
         for name in ['Half step down', 'Whole step down', 'Drop D', 'DADGAD', 'Open D', 'Open G', 'Open C', 'Standard']:
-            # A whole name, so 'Drop Db', 'Open Dm', 'Open D minor' and 'Open C6' are left for the player
+            # A whole name, so 'Drop Db', 'Open Dm', 'Open C6' and 'Open D minor' are left for the player
             # to fill instead of becoming the preset they start with.
-            if re.search(rf'(?<![a-z0-9]){name.lower()}(?![a-z0-9#♯♭])(?!\s*(?:minor|min|maj|sus|add)\b)', low):
+            minor = r'(?!\s*min(?:or)?\b)' if name.startswith('Open') else ''
+            found = re.search(rf'(?<![a-z0-9]){name.lower()}(?![a-z0-9#♯♭]){minor}', line.replace('-', ' '), re.I)
+            if found:
                 tuning = TUNINGS[name].copy()
-                note = _NOTE_STANDARD.search(line) if name == 'Standard' else None
+                note = _NOTE_BEFORE.search(line[:found.start()]) if name == 'Standard' else None
                 if note:
-                    # Standard moved to the named note, 8 semitones below E to 3 above as _letter_tuning reads.
+                    # Standard moved to that note, 8 semitones below E to 3 above as _letter_tuning reads.
                     tuning = [n + (_pitch_class(note.group(1)) - 4 + 8) % 12 - 8 for n in STANDARD]
                 break
     if 'nashville' in low or 'high strung' in low:

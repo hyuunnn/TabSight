@@ -204,14 +204,15 @@ def test_metadata_reads_note_names_nashville_and_capo_line():
 @pytest.mark.parametrize('text,tuning,capos',[
     # A name only counts whole, so a variant the presets lack stays empty instead of becoming the preset it starts with.
     ('Tuning: Drop Db',None,[]),('Tuning: Open Dm',None,[]),('Tuning: Open D minor',None,[]),('Tuning: Open C6',None,[]),
-    ('Tuning: Eb standard',[39,44,49,54,58,63],[]),('Tuning: D Standard',[38,43,48,53,57,62],[]),
+    ('Tuning: Eb standard',[39,44,49,54,58,63],[]),('Tuning: D-Standard',[38,43,48,53,57,62],[]),
     ('Tuning: a standard tuning',[40,45,50,55,59,64],[]),
     # Read right before; a wider parser once broke these.
     ('Tuning: E Standard (half step down)',[39,44,49,54,58,63],[]),('Tuning: Drop D (6th string down a whole step)',[38,45,50,55,59,64],[]),
-    ('Tuning: Drop D (from E standard)',[38,45,50,55,59,64],[]),('Tuning: Drop D Standard',[38,45,50,55,59,64],[]),
-    # A number glued to letters is a capo model, and one next to a colon is a time.
+    ('Tuning: Drop D (from E standard)',[38,45,50,55,59,64],[]),('Tuning: Standard (Capo 2 = F# standard)',[40,45,50,55,59,64],[2]),
+    ('Tuning: Drop D add capo 2',[38,45,50,55,59,64],[2]),('Tuning: Standard, Capo 2: verse',[40,45,50,55,59,64],[2]),
+    # A number glued to letters is a capo model, and one inside a time is not a fret.
     ('Tuning: Standard, G7th capo 3',[40,45,50,55,59,64],[3]),('Tuning: Standard, Shubb C1 capo 2',[40,45,50,55,59,64],[2]),
-    ('Tuning: Standard, capo 123',[40,45,50,55,59,64],[]),('Tuning: standard tuning, 0:05 capo 2',[40,45,50,55,59,64],[2]),
+    ('Tuning: Standard, capo 10:30',[40,45,50,55,59,64],[]),('Tuning: standard tuning, 0:05 capo 2',[40,45,50,55,59,64],[2]),
     ('Tuning: Standard\n0:00 capo 2, 1:30 capo 4',[40,45,50,55,59,64],[2,4]),
 ])
 def test_metadata_reads_whole_names_and_only_fret_numbers(text,tuning,capos):
