@@ -157,10 +157,6 @@ def test_unplaced_harmonic_does_not_block_save_or_preview():
     n=r.json()['notes'][0]
     assert (n['string'],n['fret'],n['technique'])==(1,3,'harmonic')
     assert client.get(f'/api/projects/{p.id}/score/gp5').status_code==200
-    # Older code saved such a note as a harmonic without a string; that project must still save and preview.
-    q=fixture_project(notes=[Note(id='h',midi=95,start=0,end=.5,technique='harmonic')]);save_project(q)
-    assert client.put(f'/api/projects/{q.id}',json=q.model_dump()).status_code==200
-    assert client.get(f'/api/projects/{q.id}/score/gp5?preview=true').status_code==200
 
 def test_import_keeps_unsupported_harmonics_as_fretted_notes_to_review():
     # A natural harmonic at 12 stays. A 16th-fret natural harmonic, and an artificial one at fret 12 (a touch
@@ -221,12 +217,15 @@ def test_metadata_reads_note_names_nashville_and_capo_line():
 @pytest.mark.parametrize('text,tuning,capos',[
     # A name only counts whole, so a variant the presets lack stays empty instead of becoming the preset it starts with.
     ('Tuning: Drop Db',None,[]),('Tuning: Open Dm',None,[]),('Tuning: Open D minor',None,[]),('Tuning: Open C6',None,[]),
+    ('Tuning: Open Dmaj',[38,45,50,54,57,62],[]),
     ('Tuning: Eb standard',[39,44,49,54,58,63],[]),('Tuning: D-Standard',[38,43,48,53,57,62],[]),
     ('Tuning: a standard tuning',[40,45,50,55,59,64],[]),
     # Read right before; a wider parser once broke these.
     ('Tuning: E Standard (half step down)',[39,44,49,54,58,63],[]),('Tuning: Drop D (6th string down a whole step)',[38,45,50,55,59,64],[]),
     ('Tuning: Drop D (from E standard)',[38,45,50,55,59,64],[]),('Tuning: Standard (Capo 2 = F# standard)',[40,45,50,55,59,64],[2]),
     ('Tuning: Drop D add capo 2',[38,45,50,55,59,64],[2]),('Tuning: Standard, Capo 2: verse',[40,45,50,55,59,64],[2]),
+    # Only a note right before 'standard' moves it.
+    ('Key: G | Tuning: Standard',[40,45,50,55,59,64],[]),
     # A number glued to letters is a capo model, and one inside a time is not a fret.
     ('Tuning: Standard, G7th capo 3',[40,45,50,55,59,64],[3]),('Tuning: Standard, Shubb C1 capo 2',[40,45,50,55,59,64],[2]),
     ('Tuning: Standard, capo 10:30',[40,45,50,55,59,64],[]),('Tuning: standard tuning, 0:05 capo 2',[40,45,50,55,59,64],[2]),

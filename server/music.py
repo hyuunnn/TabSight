@@ -63,9 +63,9 @@ def metadata_settings(description: str):
     if tuning is None:
         for name in ['Half step down', 'Whole step down', 'Drop D', 'DADGAD', 'Open D', 'Open G', 'Open C', 'Standard']:
             # A whole name, so 'Drop Db', 'Open Dm', 'Open C6' and 'Open D minor' are left for the player
-            # to fill instead of becoming the preset they start with.
-            minor = r'(?!\s*min(?:or)?\b)' if name.startswith('Open') else ''
-            found = re.search(rf'(?<![a-z0-9]){name.lower()}(?![a-z0-9#♯♭]){minor}', line.replace('-', ' '), re.I)
+            # to fill instead of becoming the preset they start with. 'Open Dmaj' is still Open D.
+            major, minor = (r'(?:maj(?:or)?)?', r'(?!\s*min(?:or)?\b)') if name.startswith('Open') else ('', '')
+            found = re.search(rf'(?<![a-z0-9]){name.lower()}{major}(?![a-z0-9#♯♭]){minor}', line.replace('-', ' '), re.I)
             if found:
                 tuning = TUNINGS[name].copy()
                 note = _NOTE_BEFORE.search(line[:found.start()]) if name == 'Standard' else None
