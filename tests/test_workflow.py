@@ -60,6 +60,28 @@ def test_harmonic_keeps_sounding_pitch(tmp_path):
     assert result['notes'][0]['midi']==83
     assert result['notes'][0]['technique']=='harmonic'
 
+def written(data,string):
+    """(tied, hammer, slide, bend point values) of each note the GP5 writes on a string, in order."""
+    song=guitarpro.parse(io.BytesIO(data),encoding='utf-8');out=[]
+    for measure in song.tracks[0].measures:
+        for beat in measure.voices[0].beats:
+            for n in beat.notes:
+                if n.string==string:
+                    e=n.effect;out.append((n.type==guitarpro.NoteType.tie,e.hammer,bool(e.slides),[v.value for v in e.bend.points] if e.bend else None))
+    return out
+
+@pytest.mark.parametrize('technique,frets',[('hammer',(3,5)),('pull',(5,3)),('slide',(3,5))])
+def test_legato_leaves_from_the_last_tied_segment_and_imports_back(tmp_path,technique,frets):
+    # The bass onset at .5 splits 'a' into two tied segments. The legato has to reach 'b', not a's own tie,
+    # and reading the file back keeps it on 'a'.
+    a,b=frets
+    p=fixture_project(notes=[Note(id='bass',midi=45,start=.5,end=1,string=5,fret=0),
+        Note(id='a',midi=64+a,start=0,end=1,string=1,fret=a,technique=technique),Note(id='b',midi=64+b,start=1,end=1.5,string=1,fret=b)])
+    data=gp5_bytes(p);flag=2 if technique=='slide' else 1
+    assert [(x[0],x[flag]) for x in written(data,1)]==[(False,False),(True,True),(False,False)]
+    path=tmp_path/'legato.gp5';path.write_bytes(data)
+    assert {n['fret']:n['technique'] for n in inspect(path)['notes'] if n['string']==1}=={a:technique,b:'normal'}
+
 def test_capo_segments_and_percussion_tracks():
     p=fixture_project(notes=[Note(id='a',midi=64,start=0,end=1,string=1,fret=0),Note(id='b',midi=66,start=2,end=3,string=1,fret=0),Note(id='hit',midi=37,start=1,end=1.125,technique='percussion')],capo_segments=[CapoSegment(start=2,capo=2)])
     song=guitarpro.parse(io.BytesIO(gp5_bytes(p)),encoding='utf-8')

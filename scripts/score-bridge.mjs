@@ -18,6 +18,7 @@ if (mode === 'convert') {
   }
   const track=score.tracks.find(t=>!t.staves[0]?.isPercussion) || score.tracks[0];
   const staff=track.staves[0];const notes=[];
+  const legato=n=>n.slideOutType?'slide':n.isHammerPullOrigin?(n.hammerPullDestination?.fret<n.fret?'pull':'hammer'):null;
   for (let bi=0;bi<staff.bars.length;bi++) {
     const bar=staff.bars[bi];const timing=bars[bi];
     const ticks=score.masterBars[bi].calculateDuration();
@@ -27,12 +28,11 @@ if (mode === 'convert') {
       for (const n of beat.notes) {
         if(n.isTieDestination) {
           const prev=notes.findLast(x=>x.string===7-n.string && x.fret===n.fret);
-          if(prev) prev.end=end;
+          // A hammer-on, pull-off or slide leaves from the last tied segment of its note, so it is read there too.
+          if(prev){prev.end=end;const tie=legato(n);if(tie&&['normal','hammer','pull'].includes(prev.technique))prev.technique=tie;}
           continue;
         }
-        let technique='normal';
-        if(n.isHammerPullOrigin)technique=n.hammerPullDestination?.fret<n.fret?'pull':'hammer';
-        if(n.slideOutType)technique='slide';
+        let technique=legato(n)??'normal';
         if(n.harmonicType)technique='harmonic';
         if(n.isPalmMute)technique='mute';
         if(n.vibrato)technique='vibrato';
